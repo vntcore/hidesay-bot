@@ -47,18 +47,25 @@ Error                                               When
 How retries work
 ----------------
 
-- **Safe to repeat** (all reads, ``set_webhook``, ``delete_webhook``, ``set_key``, the command
-  calls, ``send_message`` and ``edit_message``, ``delete_message``, ``answer_callback``,
-  ``leave_chat``, ``revoke_token``): retried after network errors and ``5xx``, up to
-  ``retry.attempts`` tries in all.
-- **Not repeated** after a network error: ``get_updates`` (the polling loop decides) and
-  ``send_typing`` (a late indicator is useless).
-- ``429`` is always waited out, up to ``rate_limit_retries`` times, each wait at most
-  ``max_rate_limit_wait`` seconds.
-- Other ``4xx`` answers are never retried.
+- **Safe to repeat**: every operation except the eight below. They are retried after network
+  errors and ``5xx``, up to ``retry.attempts`` tries in all.
+- **Not repeated** after a network error or a ``5xx``: ``get_updates`` (the polling loop
+  decides), ``send_typing`` (a late indicator is useless), and six calls that a repeat after a
+  lost answer would do twice: ``send_comment`` (comments carry no ``sendId``),
+  ``create_invite``, ``set_chat_photo``, ``set_chat_banner``, ``delete_chat_photo`` and
+  ``delete_chat_banner`` (a second delete takes off the picture before it too).
+- ``429`` is always waited out, for every operation, up to ``rate_limit_retries`` times, each
+  wait at most ``max_rate_limit_wait`` seconds.
+- Other ``4xx`` answers are never retried, and :meth:`~AsyncClient.download_media` is not
+  retried at all.
 
-``send_message`` is safe to repeat because of its ``sendId``; ``edit_message`` because the same
-edit twice gives the same result. See :doc:`../guides/errors` and :doc:`../guides/rate-limiting`.
+``send_message`` and ``forward_message`` are safe to repeat because of their ``sendId``;
+``edit_message`` because the same edit twice gives the same result. After a lost answer, a
+repeat that gets the error meaning "already done" returns as a success: ``message_not_found``
+for ``delete_message``, ``callback_answered`` for ``answer_callback``, ``chat_not_found`` for
+``leave_chat``, ``unauthorized`` for ``revoke_token``, ``member_not_found`` for
+``remove_member``, ``invite_not_found`` for ``revoke_invite``, ``request_not_found`` for
+``decide_join_request``. See :doc:`../guides/errors` and :doc:`../guides/rate-limiting`.
 
 AsyncClient
 -----------

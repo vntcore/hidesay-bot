@@ -11,18 +11,67 @@ update.
 | `@bot.on_message()` | a new message | `Message` |
 | `@bot.command("name")` | a new message that is the command `/name` | `Message` |
 | `@bot.on_edited_message()` | someone edited a message the bot had received | `Message` |
+| `@bot.on_comment()` | a comment under a channel post | `Message`, with `thread_root` |
+| `@bot.on_edited_comment()` | someone edited a comment the bot had received | `Message` |
 | `@bot.on_callback_query()` | someone pressed a button with callback data | `CallbackQuery` |
+| `@bot.on_reaction()` | someone put, changed or took back a reaction | `ReactionUpdate` |
 | `@bot.on_deleted_messages()` | messages were deleted for everyone | `DeletedMessages` |
-| `@bot.on_chat_member()` | the bot's own place in a chat changed: added, promoted, removed, blocked | `ChatMemberUpdate` |
-| `@bot.on_update()` | any update at all | `Update` |
+| `@bot.on_chat_member()` | the bot's own place in a chat changed: added, promoted, let read every message or stopped, removed, blocked | `ChatMemberUpdate` |
+| `@bot.on_member_update()` | somebody else's place changed: joined, left, removed, banned, promoted | `ChatMemberUpdate`, with `user` |
+| `@bot.on_join_request()` | somebody asked to come in through a link that needs approval | `JoinRequest` |
+| `@bot.on_chat_updated()` | the group or channel changed: name, picture, a setting, the pins | `ChatUpdated` |
+| `@bot.on_update()` | any update at all, the two from the bot's Web-Bot included (see below) | `Update` |
+
+An `Update` keeps its event in the field named after it (`update.message`,
+`update.callback_query`, `update.reaction` and so on), with two names that differ from the kind:
+a `my_chat_member` update has it in `update.chat_member`, a `chat_member` update in
+`update.member_update`.
+
+A handler only ever gets what the server handed the bot. In a private chat that is everything
+the person writes. In a group or channel it is commands, mentions of the bot, replies to its
+messages and comments under its posts, and presses of its buttons, until the room lets the bot
+read every message: that is the room's decision, made by an admin in the app, never the bot's.
+Reactions, the quoted message and the history follow the same rule. See
+[Groups and channels](groups-and-channels.md).
 
 ```python
 @bot.on_chat_member()
 async def membership(change):
-    if change.joined:
-        await bot.send_message(change.chat, "Thanks for adding me!")
+    if change.joined and not change.chat.is_private:
+        await bot.send_message(change.chat, "Thanks for adding me! Type /help to see what I do.")
+    elif change.reads_all_changed:
+        print(f"{change.chat.title}: reads everything now: {change.reads_all}")
     elif change.blocked:
         print(f"user {change.chat.id} blocked the bot")
+```
+
+When the bot is added to a group or channel, `change.chat` is the whole room (a `Chat`, with its
+permissions and settings) and `change.from_user` who added it, so the bot knows where it is and
+what it may do without asking.
+
+### Updates from the bot's Web-Bot
+
+Two kinds come from the bot's [Web-Bot](web-bot.md), the web page the app opens in the bot's
+chat, when the person says yes to something the page asked for:
+
+| `update.kind` | When | In `update.raw` |
+|---|---|---|
+| `"web_bot_write_access"` | the person let the bot write first (`requestWriteAccess` on the page), so the private chat with them exists now. Once per person | `chat`, `from`, `date` |
+| `"web_bot_contact"` | the person shared their phone number (`requestContact`), the one verified on their account. Every time they do | `chat` (`null` when they have no chat with the bot yet), `from`, `date`, `contact`: `phone`, `firstName`, `lastName`, `userId` |
+
+This version of the library has no event of its own for them: they reach `@bot.on_update()`
+handlers as they came, with `update.chat`, `update.from_user` and `update.event` set to `None`
+and the JSON in `update.raw`. Filters on the chat or the sender don't match them for the same
+reason, so test `update.kind` in the handler:
+
+```python
+@bot.on_update()
+async def from_the_web_bot(update):
+    if update.kind == "web_bot_write_access":
+        await bot.send_message(update.raw["from"]["id"], "Thanks! I'll write here when your order ships.")
+    elif update.kind == "web_bot_contact":
+        contact = update.raw["contact"]
+        await db.save_phone(contact["userId"], contact["phone"])
 ```
 
 ## Which handler runs
@@ -88,10 +137,15 @@ async def private_only(message): ...
 | `f.private`, `f.group`, `f.channel` | the kind of chat |
 | `f.has_text` | the message has text |
 | `f.has_media` | the message has pictures, clips or files |
+| `f.has_sticker` | the message is a sticker |
+| `f.forwarded` | the message is a forward |
+| `f.comment` | the message is a comment under a channel post |
 | `f.encrypted` | the message came end-to-end encrypted |
 | `f.signed` | encrypted, with a valid signature from the sender's key |
 | `f.reply` | the message answers another one |
-| `f.mentioned` | the text mentions the bot's `@handle` |
+| `f.mentioned` | the text names the bot: any of its `@handles`, or its name picked from the list |
+| `f.reaction("👍")` | a reaction put with one of these emoji; with none, any reaction put |
+| `f.changed("title")` | a change of the room that moved one of these settings |
 | `f.text("yes", "no", ignore_case=True)` | the whole text is one of these (spaces at the ends are ignored) |
 | `f.regex(r"^order (\d+)$")` | the text (or a button's data) matches; the handler can ask for `match` |
 | `f.command("start", "help")` | a command; the handler can ask for `command`. With no names, any command |
@@ -186,8 +240,9 @@ async def seen(message):
 ```
 
 A message in a group gives you the group's ID and the writer's ID together; a channel post
-gives you the channel's ID. `callback_query.chat` / `.from_user` and
-`chat_member.chat` / `.from_user` (whoever added or promoted the bot) are the same pair.
+gives you the channel's ID. `callback_query.chat` / `.from_user`, `chat_member.chat` /
+`.from_user` (whoever added or promoted the bot), a reaction's, a join request's and a room
+change's are the same pair.
 
 `from_user` is `None` for one kind of message: a channel post that speaks in the channel's own
 name. Nobody is told who wrote that - a subscriber's app does not know either - and a signed
@@ -197,13 +252,13 @@ For an ID no event handed over, because somebody typed a handle at the bot, ther
 `bot.resolve`:
 
 ```python
-@bot.command("paga")
+@bot.command("pay")
 async def pay(message, command):
     found = await bot.resolve(command.args)          # "@anna", "anna", "ANNA" all work
     if not found.is_user:
-        await message.reply("quello e un gruppo, non una persona")
+        await message.reply("That's a group or a channel, not a person.")
         return
-    await message.reply(f"{found.mention} ha id {found.id}")
+    await message.reply(f"{found.mention} has the ID {found.id}")
 ```
 
 It raises `UsernameNotFoundError` when nothing answers to the handle, and `ValidationError`
@@ -214,7 +269,7 @@ administrator has added the bot.
 
 Knowing an ID is not permission to use it. The bot can only write in chats it is in, so
 `send_message` to a resolved group raises `ChatNotFoundError` until somebody adds the bot, and
-`get_user_key` wants a chat in common. The lookup also has a window of its own, 60 a minute,
+`get_user_key` wants somebody the bot may look up. The lookup also has a window of its own, 60 a minute,
 where a handle nobody holds counts as five: resolve what people ask about, not a dictionary.
 
 ## Routers: splitting a bot into modules
@@ -302,8 +357,9 @@ async def everything_else(error, update, bot):
 - An error that no error handler takes (or that an error handler raises again) marks the update
   as **failed**. It is kept with the error, and you can retry it later
   ([Storage](storage.md#failed-updates)). The bot goes on with the next updates.
-- Errors that happen while opening an encrypted message (`DecryptionError`, `SignatureError`)
-  go to the error handlers too, before any handler runs.
+- Errors that happen while opening an encrypted message (`DecryptionError`, `SignatureError`,
+  and `KeyChangedError` when the bot pins keys with `pin_keys=True`) go to the error handlers
+  too, and then no handler runs.
 
 ## Startup and shutdown hooks
 

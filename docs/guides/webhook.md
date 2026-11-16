@@ -12,9 +12,11 @@ application you already have.
   redirect) means "try again": the server waits 1 second, then 2, 4, and so on up to one hour,
   and sends **the same update** again. Later updates wait behind it.
 - After ten failures in a row, the owner is told in the app. Updates keep queuing for up to 72
-  hours.
+  hours, and the oldest are dropped once more than 10 000 wait.
 - The address must be `https`, must not contain a user name, password or `#fragment`, and must
   point to a public IP address.
+- Requests come from addresses that change over time, so don't allow or block them by IP:
+  check the secret instead.
 
 Because the server retries until it gets a `2xx`, an update can arrive twice. The library
 recognises repeats by their `updateId` and handles each update once.

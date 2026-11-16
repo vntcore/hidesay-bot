@@ -21,17 +21,22 @@ async def weather(message, command):
 ### Commands in groups
 
 In a group, people may write `/start@weatherbot` to choose which bot they mean. The library
-compares the handle with the bot's own and **ignores commands meant for another bot**. Pass
-`ignore_mention=True` to accept them anyway.
+compares the handle with every handle the bot answers to (the owner can give it more than one)
+and **ignores commands meant for another bot**. Pass `ignore_mention=True` to accept them
+anyway.
 
-In groups the bot does not see every message. With **privacy mode** on (the default, changed by
-the owner in the app), the server gives a bot only:
+In groups and channels the bot does not see every message. Until the room lets it read
+everything, the server gives a bot only:
 
 - commands (`/cmd` reaches every bot in the group, `/cmd@name` only that bot);
-- replies to the bot's messages;
-- messages that mention the bot's `@handle`.
+- mentions: any of its `@handles`, or its name picked from the list (`@[Weather](uB48213907)`);
+- replies to the bot's messages, and comments under its posts;
+- presses of its buttons.
 
-With privacy mode off, the bot gets everything, and the group is told on its member list.
+Reading every message is the room's decision, made by an admin in the app, never the bot's or
+its owner's: it is off when the bot is added, and every member sees it on the member list. The
+bot learns it from its seat (`change.new.reads_all` in a `my_chat_member` update, or
+`chat.reads_all`). See [Groups and channels](groups-and-channels.md).
 
 ### The command menu
 

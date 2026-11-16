@@ -22,17 +22,21 @@ This page is for people who want to know how the library is built, or who want t
 │   validation → rate limiter → HTTP → envelope → retries                │
 ├────────────────────────────────────────────────────────────────────────┤
 │ Sans-I/O core            _spec.py, _http.py, _validate.py, errors.py,  │
-│                          ratelimit.py, models.py                       │
+│                          ratelimit.py, models.py, files.py             │
 │   no network here: pure functions, so the tests need none              │
 ├────────────────────────────────────────────────────────────────────────┤
 │ OpenPGP                  crypto/keys.py, crypto/_lib.py                │
 │   pysequoia seals and opens, rpgp-py makes the keys and checks the     │
 │   signatures inside compressed messages                                │
+├────────────────────────────────────────────────────────────────────────┤
+│ Web-Bot data             webbot.py, _ed25519.py                        │
+│   checks the server's Ed25519 signature on a Web-Bot page's initData,  │
+│   with cryptography when it is installed, in plain Python otherwise    │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 Each layer only uses the ones below it. The low-level clients work without the bot; the
-OpenPGP module works without either.
+OpenPGP module and the Web-Bot check work without either.
 
 ## Modules
 
@@ -47,12 +51,15 @@ OpenPGP module works without either.
 | `models.py` | the typed results: frozen dataclasses that keep the original JSON in `raw` |
 | `keyboard.py` | buttons and keyboards, and the server's markup rules |
 | `wire.py` | the app's internal message format (text, media, albums, forwards...) inside encrypted messages |
+| `files.py` | `InputFile`: a file to send, checked against the server's rules and described for a readable or an encrypted chat |
 | `crypto/_lib.py` | the only module that talks to pysequoia and rpgp-py |
 | `crypto/keys.py` | `BotKey` and `PublicKey` |
 | `router.py`, `filters.py` | handlers, routers, middleware, filters |
 | `engine.py` | the update engine and the polling loop |
 | `storage.py` | `Storage`, `MemoryStorage`, `SQLiteStorage` |
 | `webhook.py` | the ASGI webhook app |
+| `webbot.py` | `validate_web_bot_data`: reads the `initData` of a Web-Bot page and checks its signature, bot and age |
+| `_ed25519.py` | the Ed25519 check behind `webbot.py`: `cryptography` when it is installed, plain Python when it isn't |
 | `bot.py` | `Bot` and `SyncBot` |
 | `_secrets.py` | `Secret`, environment variables and `_FILE` variants, log redaction |
 | `__main__.py` | the `hidesay-bot` command |
@@ -79,11 +86,12 @@ A `Call` also says whether it is safe to send again (`repeatable`), how long a l
 take (`read_timeout`), and what the rate limiter needs to know (`send`, `edit`, `chat_id`,
 `chat_kind`).
 
-`AsyncClient.execute()` and `Client.execute()` run a `Call` the same way: wait for the rate
-limiter, send, read the envelope, map errors, decide whether to retry. Only the waiting and the
-I/O differ (`await asyncio.sleep` against `time.sleep`). This is how the two clients stay the
-same without one wrapping the other. Wrapping a sync client around `asyncio.run()` breaks inside
-running loops, and a hidden event loop thread brings its own problems: both were rejected
+Both clients run a `Call` the same way, in their `execute()` method, which is internal and left
+out of the API reference: wait for the rate limiter, send, read the envelope, map errors,
+decide whether to retry. Only the waiting and the I/O differ (`await asyncio.sleep` against
+`time.sleep`). This is how the two clients stay the same without one wrapping the other.
+Wrapping a sync client around `asyncio.run()` breaks inside running loops, and a hidden event
+loop thread brings its own problems: both were rejected
 ([research](../RESEARCH.md#32-sync-and-async-without-writing-the-logic-twice)).
 
 ## The life of an update

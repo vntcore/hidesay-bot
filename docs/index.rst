@@ -36,15 +36,20 @@ What you get
 
 - **The whole Bot API**: every operation, with typed models, as ``async`` calls
   (:class:`~hidesay_bot.AsyncClient`) and as blocking calls (:class:`~hidesay_bot.Client`).
-- **A bot framework**: handlers for messages, commands, button presses, edits, deletions and
-  membership changes; filters; routers; middleware; error handlers (:doc:`guides/events`).
+- **A bot framework**: handlers for messages, commands, comments, button presses, reactions,
+  edits, deletions, membership changes and changes to a room; filters; routers; middleware;
+  error handlers (:doc:`guides/events`).
+- **Files, stickers and forwards in every chat**: in an encrypted one the bot seals the files
+  and the message itself, so the server sees neither (:doc:`guides/messages`).
+- **Groups and channels**: what the room lets the bot read, and running a room the bot holds a
+  badge in (:doc:`guides/groups-and-channels`).
 - **Automatic OpenPGP**: decryption, signature checks, encryption and signing, key generation
   and rotation (:doc:`guides/openpgp`, :doc:`CRYPTOGRAPHY`).
 - **Reliable delivery**: long polling and webhooks that never confirm an update before it is
   safe, and a SQLite queue that survives restarts (:doc:`guides/long-polling`,
   :doc:`guides/webhook`, :doc:`guides/storage`).
-- **Safe retries and rate limits**: every send has a ``sendId``, so a retry never writes a
-  message twice; the client waits on ``429`` and paces itself like the server does
+- **Safe retries and rate limits**: every message sent or forwarded carries a ``sendId``, so a
+  retry never writes it twice; the client waits on ``429`` and paces itself like the server does
   (:doc:`guides/rate-limiting`).
 - **Async and sync with the same features**: :class:`~hidesay_bot.Bot` and
   :class:`~hidesay_bot.SyncBot`, :class:`~hidesay_bot.AsyncClient` and :class:`~hidesay_bot.Client`
@@ -79,6 +84,7 @@ same text is also available offline: ``help(hidesay_bot.Bot)`` in Python, or
 
    guides/messages
    guides/events
+   guides/groups-and-channels
    guides/commands-and-buttons
    guides/long-polling
    guides/webhook
@@ -117,6 +123,7 @@ same text is also available offline: ``help(hidesay_bot.Bot)`` in Python, or
    architecture/index
    openapi-reference/index
    openapi-reference/operations
+   openapi-reference/web-bots
    API_COVERAGE
    deployment/index
    security/index

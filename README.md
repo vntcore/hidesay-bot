@@ -33,20 +33,29 @@ for the people who should read them. You don't change anything in the handlers.
 
 ## What it does
 
-- **Every operation of the Bot API**, with typed models, as async calls (`AsyncClient`)
-  and as blocking calls (`Client`).
+- **Every operation of Bot API 2.0.0**, with typed models, as async calls (`AsyncClient`)
+  and as blocking calls (`Client`). IDs are strings, as in the API: `"48213907"` for a person,
+  `"B48213907"` for a bot, `"G48213907"` for a group, `"C48213907"` for a channel.
 - **A high-level bot** with handlers for messages, commands (`/start` and `/start@yourbot`),
-  button presses, edited and deleted messages, and changes to the bot's membership. Filters you
-  can combine, routers to split a bot into modules, middleware, and one place to handle errors.
+  comments, button presses, reactions, edited and deleted messages, membership changes and
+  changes to a room. Filters you can combine, routers to split a bot into modules, middleware,
+  and one place to handle errors.
 - **Automatic OpenPGP**: incoming messages are decrypted and their signatures checked;
   replies are encrypted for every member of the chat and signed. A message that should be
   encrypted is never sent in clear. Tested with real keys and messages from the phones'
   library (PGPainless 1.7.6).
+- **Files, stickers and forwards in every chat**: in an encrypted one the bot seals the files
+  and the message that describes them, so the server sees neither.
+- **Groups and channels**: the bot reads what the room lets it read, and with an admin badge it
+  runs the room: settings, members, bans, invite links, join requests, comments, statistics.
+- **Web-Bots**: `validate_web_bot_data` checks who opened the bot's Web-Bot page, from the
+  `initData` the page sends to your server: the Hidesay server's signature, the bot it was
+  signed for, and its age.
 - **Long polling and webhooks** with "at least once" delivery done right: no update is lost
   when a handler fails, no update is confirmed to the server before it is safe, and a SQLite
   queue survives restarts.
-- **Safe retries**: every send has a `sendId`, so a retry after a timeout never writes the
-  message twice. After a `429` the client waits as long as the server asks. A client-side rate
+- **Safe retries**: every message sent or forwarded carries a `sendId`, so a retry after a
+  timeout never writes it twice. After a `429` the client waits as long as the server asks. A client-side rate
   limiter uses the same algorithm as the server.
 - **Security**: the token never shows up in logs, exceptions or `repr`. Secrets can come from
   environment variables or from files (Docker and Kubernetes secrets too). The webhook checks
@@ -213,9 +222,9 @@ pip install -e . --group docs
 sphinx-build -b html docs docs/_build/html
 ```
 
-Good places to start: [quick start][quickstart], [cryptography][crypto],
-[API coverage][coverage], [research and decisions][research]. Ready-to-run examples are in
-[`examples/`][examples].
+Good places to start: [quick start][quickstart], [groups and channels][groups],
+[Web-Bots][webbot], [cryptography][crypto], [API coverage][coverage],
+[research and decisions][research]. Ready-to-run examples are in [`examples/`][examples].
 
 ## Security
 
@@ -231,6 +240,8 @@ with Sequoia PGP under LGPL-2.0-or-later inside its wheels), rpgp-py (MIT).
 [docs]: https://github.com/vntcore/hidesay-bot/tree/main/docs
 [examples]: https://github.com/vntcore/hidesay-bot/tree/main/examples
 [quickstart]: https://github.com/vntcore/hidesay-bot/blob/main/docs/getting-started/quickstart.md
+[groups]: https://github.com/vntcore/hidesay-bot/blob/main/docs/guides/groups-and-channels.md
+[webbot]: https://github.com/vntcore/hidesay-bot/blob/main/docs/guides/web-bot.md
 [crypto]: https://github.com/vntcore/hidesay-bot/blob/main/docs/CRYPTOGRAPHY.md
 [coverage]: https://github.com/vntcore/hidesay-bot/blob/main/docs/API_COVERAGE.md
 [research]: https://github.com/vntcore/hidesay-bot/blob/main/docs/RESEARCH.md

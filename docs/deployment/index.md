@@ -79,7 +79,7 @@ VOLUME /data
 CMD ["python", "bot.py"]
 ```
 
-`requirements.txt` pins the minor version, `hidesay-bot>=0.1,<0.2`. Install `ca-certificates`: httpx2 uses the system's
+`requirements.txt` pins the minor version, `hidesay-bot>=0.3,<0.4`. Install `ca-certificates`: httpx2 uses the system's
 certificate store.
 
 ```yaml

@@ -11,7 +11,7 @@ with a person writing to the bot from the app.
 | `02_echo_bot.py` | text, media and messages without text; edited messages |
 | `03_commands.py` | commands with arguments, the command menu published at start-up, a catch-all for unknown commands |
 | `04_private_messages.py` | a bot that works in private chats only, and says so in groups |
-| `05_group_bot.py` | being added to a group, mentions, the member list, an admin-only command, deleted messages |
+| `05_group_bot.py` | being added to a group and asking to read every message, a tally that needs it, newcomers, a handler that passes the message on, mentions, the member list, an admin-only command, deleted messages |
 | `06_inline_buttons.py` | a counter with buttons, links, `KeyboardBuilder` |
 | `07_callbacks.py` | a poll and a menu that changes in place; regex patterns on button data; late answers |
 | `08_long_polling.py` | polling by hand with `AsyncClient`, confirming each update after handling it |

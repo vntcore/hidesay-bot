@@ -51,6 +51,18 @@ Updates
 .. autoclass:: Media
    :members:
 
+.. autoclass:: Sticker
+   :members:
+
+.. autoclass:: Forward
+   :members:
+
+.. autoclass:: ForwardChat
+   :members:
+
+.. autoclass:: LinkCard
+   :members:
+
 .. autoclass:: CallbackQueryBase
    :members:
 
@@ -65,7 +77,19 @@ Updates
 .. autoclass:: DeletedMessages
    :members:
 
+.. autoclass:: ReactionUpdate
+   :members:
+
+.. autoclass:: ReactionCount
+   :members:
+
 .. autoclass:: ChatMemberUpdate
+   :members:
+
+.. autoclass:: JoinRequest
+   :members:
+
+.. autoclass:: ChatUpdated
    :members:
 
 Messages the bot sent
@@ -82,8 +106,30 @@ Messages the bot sent
    :members:
    :show-inheritance:
 
+.. autoclass:: MessageReactions
+   :members:
+
+.. autoclass:: Reaction
+   :members:
+
 .. autodata:: KEEP
    :no-value:
+
+Files to send
+-------------
+
+:class:`InputFile` is what :meth:`Bot.send_media` takes; :class:`MediaIn` is how a file uploaded
+with :meth:`AsyncClient.upload_file` is described in the ``media`` of a send into a readable
+chat.
+
+.. autoclass:: InputFile
+   :members:
+
+.. autoclass:: MediaIn
+   :members:
+
+.. autoclass:: UploadedFile
+   :members:
 
 Chats and people
 ----------------
@@ -112,6 +158,9 @@ Chats and people
 .. autoclass:: AdminRights
    :members:
 
+.. autoclass:: MemberPermissions
+   :members:
+
 .. autoclass:: ChatMembers
    :members:
 
@@ -119,6 +168,37 @@ Chats and people
    :members:
 
 .. autoclass:: UserKey
+   :members:
+
+.. autoclass:: Profile
+   :members:
+   :show-inheritance:
+
+Running a group or channel
+--------------------------
+
+.. autoclass:: Invite
+   :members:
+
+.. autoclass:: Ban
+   :members:
+
+.. autoclass:: Picture
+   :members:
+
+.. autoclass:: Comments
+   :members:
+
+.. autoclass:: ChannelStats
+   :members:
+
+.. autoclass:: StatsWindow
+   :members:
+
+.. autoclass:: GrowthPoint
+   :members:
+
+.. autoclass:: PostViews
    :members:
 
 Handles

@@ -237,7 +237,7 @@ It does **not** prove:
    hidesay-bot takes it from the latest updates or asks `GET /chats/{id}`, and caches it for
    `cache_ttl` seconds.
 2. **Recipients.** `GET /chats/{id}/keys` gives the members' keys (without the bot, and without
-   other bots in privacy mode). Each key is read and checked: its fingerprint must match the
+   other bots the room doesn't let read every message). Each key is read and checked: its fingerprint must match the
    one the server gives, it must not be revoked or expired, it must have an encryption subkey
    that is neither, and it must not be v6 (phones could not open the result). In a private chat
    an unusable key stops the send with `EncryptionError`. In a group, that member is left out
@@ -283,9 +283,9 @@ message: `True` requires encryption, `False` requires plain text.
 ## 6. Encrypted groups and attachments
 
 In an encrypted group, **the phone of the person who writes** decides which bots to seal the
-message to. It does that only for commands, mentions and replies to the bot, unless the owner
-turned the bot's privacy mode off. A bot without a published key gets nothing in an encrypted
-group.
+message to. It does that only for commands, mentions and replies to the bot, unless the room
+lets the bot read every message, which is the room's decision, made by an admin in the app. A
+bot without a published key gets nothing in an encrypted group.
 
 The attachments of encrypted chats are binary OpenPGP files on the server. `message.media`
 describes them (the description comes from inside the encrypted message), and
@@ -296,13 +296,37 @@ data = await bot.download_media(message.media[0])
 
 downloads the file and decrypts it. A phone seals an attachment only to the chat's recipients,
 not to the bots it addresses. In a private chat with the bot this always works. In a group it
-works only if the bot is in the group's list of keys (that is, its privacy mode is off).
-Otherwise decryption fails with `NotARecipientError`. Downloads have a size limit
-(`max_bytes`, 64 MiB by default), which also applies to the decrypted file, and they do not
-send the token: that address does not use it.
+works only if the bot is in the group's list of keys (that is, the room lets it read every
+message). Otherwise decryption fails with `NotARecipientError`. When the message gives the
+file's SHA-256, the download is checked against it, and a file that differs is refused with
+`MediaIntegrityError`: the hash travels inside the signed message, the file does not carry a
+signature of its own. Downloads have a size limit (`max_bytes`, 64 MiB by default), which also
+applies to the decrypted file, and they do not send the token: that address does not use it.
 
 Phones never compress attachments. A compressed one is refused with `DecryptionError` before
 anything is inflated: a 64 MiB file of compressed data could open to many gigabytes.
+
+### 6.1 What the bot seals itself
+
+In a readable chat the server writes the message a file or a sticker needs. In an encrypted
+chat it can't, so the bot does what a phone does:
+
+- **files** (`bot.send_media`): each file is sealed to the chat's recipients and to the bot, as
+  binary OpenPGP, unsigned and uncompressed, like the phones' own files, and uploaded sealed
+  under a neutral name and type. The message that describes the files (their IDs, kinds, names,
+  sizes, SHA-256) is then sealed and signed like any text. The server learns that a file of some
+  size went up, and nothing else;
+- **stickers** (`bot.send_sticker`): the bot asks the server what the sticker is, then seals
+  the message that names it;
+- **forwards** (`bot.forward_message`) into or out of an encrypted chat: the bot opens the
+  message and its files, seals them again for the target chat, and seals the message with
+  "forwarded from" over it. The server forwards only between readable chats, and refuses the
+  rest with `chat_is_protected`. A chat that protects its content keeps its messages in, here
+  too.
+
+Nothing here ever falls back to sending in clear: a readable chat takes from the bot only what
+the server writes for it, so a message of an encrypted chat goes into a readable one only as an
+explicit copy (`hide_sender=True`).
 
 ---
 

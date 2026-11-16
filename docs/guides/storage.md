@@ -30,8 +30,8 @@ bot = Bot(storage="bot.db")                    # a path is the same as SQLiteSto
 - It takes an operating system lock on a file next to the database (`bot.db.<bot id>.lock`), so
   only one process handles a bot's updates. The system releases the lock when the process dies,
   even in a crash.
-- One file can hold several bots: each bot's rows are kept apart by its ID, and each bot has its
-  own lock.
+- One file can hold several bots: each bot's rows are kept apart by the number in its token, and
+  each bot has its own lock.
 - On Linux and macOS the database and the lock file are created readable by their owner only
   (`0600`), and opening an existing database that others can read logs a warning.
 

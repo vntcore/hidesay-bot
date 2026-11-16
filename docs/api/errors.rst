@@ -26,28 +26,41 @@ Code                    Status  Exception                        Meaning
 ``bad_markup``          400     :exc:`BadMarkupError`            the buttons break a rule
 ``bad_webhook``         400     :exc:`BadWebhookError`           the webhook URL is not acceptable
 ``chat_is_open``        400     :exc:`ChatIsOpenError`           keys asked for a readable chat
-``too_large``           413     :exc:`PayloadTooLargeError`      the request body is over 256 KiB
+``bad_media``           400     :exc:`BadMediaError`             the files of a send can't make a message
+``chat_is_protected``   400     :exc:`ChatIsProtectedError`      a sealed message, or one into an encrypted
+                                                                 chat: the bot forwards it itself
+``too_large``           413     :exc:`PayloadTooLargeError`      a body over 256 KiB, a file over 50 MB, a
+                                                                 picture over the server's limit
 ``unauthorized``        401     :exc:`AuthenticationError`       missing, revoked, replaced or invalid token
 ``bot_paused``          403     :exc:`BotPausedError`            the owner paused the bot
 ``forbidden``           403     :exc:`ForbiddenError`            no right to do this here
 ``blocked_by_user``     403     :exc:`BlockedByUserError`        the person blocked the bot
 ``user_gone``           403     :exc:`UserGoneError`             the person closed their account
+``reads_all_needed``    403     :exc:`ReadsAllNeededError`       only a bot the room lets read every message
+                                                                 may do this
+``comments_closed``     403     :exc:`CommentsClosedError`       the channel or the post takes no comments
 ``not_found``           404     :exc:`EndpointNotFoundError`     no such path: usually a wrong ``api_url``
 ``chat_not_found``      404     :exc:`ChatNotFoundError`         no such chat, or the bot is not in it
 ``message_not_found``   404     :exc:`MessageNotFoundError`      no such message
 ``member_not_found``    404     :exc:`MemberNotFoundError`       not a member, or hidden from the bot
-``user_not_found``      404     :exc:`UserNotFoundError`         no such person, or no chat in common
+``user_not_found``      404     :exc:`UserNotFoundError`         no such person, or nobody the bot may look up
 ``username_not_found``  404     :exc:`UsernameNotFoundError`     nobody and no chat answers to that handle
 ``no_user_key``         404     :exc:`NoUserKeyError`            the person never published a key
 ``callback_not_found``  404     :exc:`CallbackNotFoundError`     no such button press
+``sticker_not_found``   404     :exc:`StickerNotFoundError`      no such sticker, or not one the bot may send
+``invite_not_found``    404     :exc:`InviteNotFoundError`       no such invite link in that chat
+``request_not_found``   404     :exc:`JoinRequestNotFoundError`  nobody of that ID asked to join
 ``conflict``            409     :exc:`SendIdConflictError`       the ``sendId`` was used in another chat
 ``webhook_active``      409     :exc:`WebhookActiveError`        polling while a webhook is set
 ``callback_answered``   409     :exc:`CallbackAnsweredError`     the press was answered already
+``chat_is_public``      409     :exc:`ChatIsPublicError`         a public chat has no invite links
+``chat_full``           409     :exc:`ChatFullError`             the chat can't take anybody else
 ``callback_expired``    410     :exc:`CallbackExpiredError`      more than 60 seconds since the press
 ``rate_limited``        429     :exc:`RateLimitError`            too many API calls
 ``flood_wait``          429     :exc:`FloodWaitError`            too many messages into one chat, or overall; also too many handle lookups
 ``slow_mode``           429     :exc:`SlowModeError`             the group's slow mode
 ``internal``            500     :exc:`ServerError`               the server failed
+``try_again``           503     :exc:`ServerError`               the server can't do it just now: try again
 ======================  ======  ===============================  ============================================
 
 The base classes
@@ -91,6 +104,14 @@ Answers from the server
    :show-inheritance:
    :class-doc-from: class
 
+.. autoexception:: BadMediaError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: ChatIsProtectedError
+   :show-inheritance:
+   :class-doc-from: class
+
 .. autoexception:: PayloadTooLargeError
    :show-inheritance:
    :class-doc-from: class
@@ -112,6 +133,14 @@ Answers from the server
    :class-doc-from: class
 
 .. autoexception:: UserGoneError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: ReadsAllNeededError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: CommentsClosedError
    :show-inheritance:
    :class-doc-from: class
 
@@ -151,6 +180,18 @@ Answers from the server
    :show-inheritance:
    :class-doc-from: class
 
+.. autoexception:: StickerNotFoundError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: InviteNotFoundError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: JoinRequestNotFoundError
+   :show-inheritance:
+   :class-doc-from: class
+
 .. autoexception:: ConflictError
    :show-inheritance:
    :class-doc-from: class
@@ -164,6 +205,14 @@ Answers from the server
    :class-doc-from: class
 
 .. autoexception:: CallbackAnsweredError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: ChatIsPublicError
+   :show-inheritance:
+   :class-doc-from: class
+
+.. autoexception:: ChatFullError
    :show-inheritance:
    :class-doc-from: class
 
@@ -234,6 +283,10 @@ OpenPGP
    :show-inheritance:
 
 .. autoexception:: KeyChangedError
+   :members:
+   :show-inheritance:
+
+.. autoexception:: MediaIntegrityError
    :members:
    :show-inheritance:
 

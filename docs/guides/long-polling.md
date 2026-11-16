@@ -96,6 +96,7 @@ not wait for itself).
 
 ## Updates that wait for too long
 
-The server keeps updates for 72 hours. A bot that is off for longer loses the oldest ones. When
-the bot comes back after a long pause and the old messages no longer matter, start it with
+The server keeps updates for 72 hours, and drops the oldest when more than 10 000 pile up
+unread. A bot that is off for longer, or falls that far behind, loses the oldest ones. When the
+bot comes back after a long pause and the old messages no longer matter, start it with
 `skip_pending=True`.

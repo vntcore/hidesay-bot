@@ -9,13 +9,17 @@ HidesayBotError
 ├── ValidationError           a request that the server would refuse; it was not sent
 ├── PayloadError              the server sent JSON this version cannot read
 ├── APIError                  the server answered with an error
-│   ├── BadRequestError           400 (WrongBodyKindError, BadMarkupError, BadWebhookError, ChatIsOpenError)
+│   ├── BadRequestError           400 (WrongBodyKindError, BadMarkupError, BadWebhookError, ChatIsOpenError,
+│   │                                  BadMediaError, ChatIsProtectedError)
 │   ├── AuthenticationError       401
-│   ├── ForbiddenError            403 (BotPausedError, BlockedByUserError, UserGoneError)
+│   ├── ForbiddenError            403 (BotPausedError, BlockedByUserError, UserGoneError,
+│   │                                  ReadsAllNeededError, CommentsClosedError)
 │   ├── NotFoundError             404 (ChatNotFoundError, MessageNotFoundError, MemberNotFoundError,
-│   │                                  UserNotFoundError, NoUserKeyError, CallbackNotFoundError,
-│   │                                  EndpointNotFoundError)
-│   ├── ConflictError             409 (SendIdConflictError, WebhookActiveError, CallbackAnsweredError)
+│   │                                  UserNotFoundError, UsernameNotFoundError, NoUserKeyError,
+│   │                                  CallbackNotFoundError, StickerNotFoundError, InviteNotFoundError,
+│   │                                  JoinRequestNotFoundError, EndpointNotFoundError)
+│   ├── ConflictError             409 (SendIdConflictError, WebhookActiveError, CallbackAnsweredError,
+│   │                                  ChatIsPublicError, ChatFullError)
 │   ├── CallbackExpiredError      410
 │   ├── PayloadTooLargeError      413
 │   ├── RateLimitError            429 (FloodWaitError, SlowModeError)
@@ -30,9 +34,11 @@ HidesayBotError
 │   │   └── EncryptionRequiredError
 │   ├── DecryptionError
 │   │   └── NotARecipientError
+│   ├── MediaIntegrityError       a downloaded file is not the one its message describes
 │   ├── SignatureError
 │   └── KeyChangedError
 ├── WebhookError
+├── WebBotDataError           validate_web_bot_data refused the initData of a Web-Bot page
 ├── PollingError
 └── StorageError
     └── PollingConflictError
@@ -63,16 +69,20 @@ except APIError as exc:
 You don't need to wrap every call in a retry loop. The client already:
 
 - retries on network errors and `5xx` answers, with a growing random wait, **when the call is
-  safe to repeat**: reads, idempotent calls, and sends (which always carry a `sendId`). By
-  default it tries 4 times in all;
+  safe to repeat**: reads, idempotent calls, and the sends that carry a `sendId`
+  (`send_message`, `forward_message`). By default it tries 4 times in all;
 - waits out `429` answers for as long as the server asks (up to 90 seconds, 5 times per call);
 - treats some errors after an uncertain attempt as success. For example, if a delete timed out
   and the retry says `message_not_found`, the first attempt did delete it.
 
 It never retries other `4xx` errors: they would fail the same way again.
 
-`send_typing` and `get_updates` are not retried after a network error: a late "typing" is
-useless, and polling has its own loop.
+Eight calls are not retried after a network error or a `5xx`, because a second try could do
+the job twice or would come too late: `get_updates` (polling has its own loop), `send_typing`
+(a late "typing" is useless), `send_comment` (comments carry no `sendId`), `create_invite` (it
+would make two links), `set_chat_photo` and `set_chat_banner` (the picture would go up twice),
+`delete_chat_photo` and `delete_chat_banner` (a second delete takes off the picture before it
+too). When one of them fails that way, the first try may still have gone through.
 
 When the retries run out, you get the last error. See [Configuration](../getting-started/configuration.md#retries)
 to change the numbers.
@@ -123,7 +133,7 @@ async def notify(message, command):
 |---|---|---|
 | `AuthenticationError` | the token is wrong, revoked or replaced | get a new token from the console |
 | `BotPausedError` | the owner paused the bot | nothing until it is resumed; polling waits for it |
-| `WebhookActiveError` | you poll while a webhook is set | `run(drop_webhook=True)` or delete the webhook |
+| `PollingError` | the bot polls while a webhook is set (`get_updates` on a client raises `WebhookActiveError`) | `run(drop_webhook=True)` or delete the webhook |
 | `EndpointNotFoundError` | the server has no such path | `api_url` points to the wrong server: use the API address the console shows |
 | `EncryptionError` | the message could not be encrypted, and was not sent | see [OpenPGP](openpgp.md#common-problems) |
 | `PollingConflictError` | another process runs this bot with the same database | run one process |

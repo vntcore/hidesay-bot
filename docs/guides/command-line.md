@@ -64,12 +64,14 @@ hidesay-bot fingerprint bot-key.asc --spaced
 
 ## whoami
 
-Asks the server who the token belongs to.
+Asks the server who the token belongs to. `also` lists the other handles the bot answers to,
+when it has some.
 
 ```text
 @weatherbot (id B48213907) - Weather
+also:     @meteo, @rainbot
 mode:     protected, key 3F1A 9C0D 52E7 B8A4 6C11 0D93 E2F4 7A55 9B10 C6D2
-status:   active, privacy mode on
+status:   active
 webhook:  none (polling)
 queued:   0 update(s)
 ```

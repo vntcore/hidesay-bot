@@ -11,7 +11,7 @@ A handler for messages gets a `Message`:
 @bot.on_message()
 async def show(message):
     print(message.id)                    # 1834, unique inside the chat
-    print(message.chat.id)               # 48213907, or G48213907 in a group
+    print(message.chat.id)               # "48213907", or "G48213907" in a group
     print(message.chat.kind)             # ChatKind.PRIVATE, GROUP or CHANNEL
     print(message.from_user.username)    # "anna", or None if she has no handle
     print(message.text)                  # what she wrote, or None
@@ -24,7 +24,8 @@ async def show(message):
 | `chat` | `ChatRef` | `id`, `kind`, and `title` / `username` for groups and channels |
 | `from_user` | `User` or `None` | who wrote it. `None` for a channel post written in the channel's name |
 | `date` | `datetime` | when it was sent, in UTC |
-| `reply_to` | `int` or `None` | the ID of the message it answers |
+| `reply_to` | `int` or `None` | the ID of the message it answers; `None` also when that message never reached the bot |
+| `kind` | `str` | the kind of message, as the server says: `"user"` for anything a person typed or attached |
 | `text` | `str` or `None` | the text, already decrypted in an encrypted chat |
 | `media` | tuple of `Media` | pictures, clips and files attached |
 | `signature` | `str` or `None` | for a signed channel post with no `from_user`: the name it shows |
@@ -32,21 +33,26 @@ async def show(message):
 | `armored` | `str` or `None` | the original OpenPGP message, in an encrypted chat |
 | `plaintext` | `str` or `None` | the exact decrypted body (the app's internal format), in an encrypted chat |
 | `verification` | `Verification` or `None` | the result of the signature check, in an encrypted chat |
+| `reply_to_message` | `Message` or `None` | the message it answers, when the bot was handed that one too |
+| `thread_root` | `int` or `None` | for a comment, the channel post it hangs under |
+| `sticker` | `Sticker` or `None` | the sticker, for a message that is one |
+| `forward` | `Forward` or `None` | who a forwarded message came from |
+| `link` | `LinkCard` or `None` | the card the sender's phone made for the first link |
+| `markup` | `InlineKeyboard` or `None` | buttons, only ever on a bot's message (a quoted one) |
 | `raw` | `dict` | the JSON the server sent, untouched |
 
-Some fields are shortcuts: `message.chat_id` is `message.chat.id`, and `message.is_command`
-is true when the text starts with `/`.
+Some fields are shortcuts: `message.chat_id` is `message.chat.id`, `message.is_command` is true
+when the text starts with `/`, and `message.is_comment` when the message is a comment.
 
-### Text in readable chats
+### Text
 
-In a readable chat the server hands the text over slightly cleaned: spaces at the start and at
-the end are removed, runs of empty lines become one, and the text is cut at 4000 characters.
-In an encrypted chat you get the exact text the person wrote.
+In an encrypted chat you get the exact text the person wrote; in a readable one, what the
+server stored. For a file or an album, `message.text` is the caption.
 
-### Stickers, calls, payment requests
+### Stickers and calls
 
-For a sticker, a call notice or a payment request, `message.text` is `None`. In an encrypted
-chat, `message.plaintext` still holds the app's internal format if you need it.
+For a sticker or a call notice `message.text` is `None`; `message.sticker` describes a sticker.
+In an encrypted chat, `message.plaintext` still holds the app's internal format if you need it.
 
 ### Media
 
@@ -66,9 +72,16 @@ async def save_photo(message):
 ```
 
 `download_media` refuses files bigger than `max_bytes` (64 MiB by default). In an encrypted
-chat the file is decrypted for you. In an encrypted **group**, phones seal attachments only to
-the chat's members, so a bot in privacy mode can read the text but not the attachments: the
-download then fails with `NotARecipientError`.
+chat the file is decrypted for you, and when the message gives its SHA-256 (`item.sha256`) the
+file is checked against it. In an encrypted **group**, phones seal attachments only to the
+group's key list, which has the bot in it only when the room lets it read every message: a bot
+that gets only what is meant for it can read the words of a command but not its attachments,
+and the download fails with `NotARecipientError`.
+
+A message can also be a sticker (`message.sticker`), a forward (`message.forward` says who it
+came from), carry a link card (`message.link`), and quote another message
+(`message.reply_to_message`, when the bot was handed that one too). In an encrypted chat the
+bot reads all of it from inside the message, so handlers see the same fields either way.
 
 ## Sending
 
@@ -88,8 +101,10 @@ await bot.send_message(message.chat, "Hello")    # a chat object works too
 await bot.send_message("48213907", "Done", reply_to=1834)
 ```
 
-The bot can only write into chats it is in. In a private chat, the person must have started
-the chat with the bot first.
+The bot can only write into chats it is in. A private chat with a person exists once they
+started it, or once they let the bot write first from its Web-Bot: the page calls
+`Hidesay.WebBot.requestWriteAccess()`, and when they say yes the bot gets a
+`web_bot_write_access` update (see {doc}`web-bot`).
 
 ### Encryption is automatic
 
@@ -158,6 +173,119 @@ await message.reply(result)
 The indicator goes away after a few seconds or when the message arrives. The server sends at
 most one every 3 seconds per chat; extra calls return `False` and do nothing.
 
+## Files
+
+`send_media` sends one file, or an album of 2 to 10 pictures and clips, with a caption:
+
+```python
+from hidesay_bot import InputFile
+
+await bot.send_media(chat_id, "sunset.jpg", caption="Tonight")      # a path
+await bot.send_media(chat_id, report_bytes)                         # bytes, sent as a file
+await bot.send_media(
+    chat_id,
+    [InputFile.from_path("a.jpg", width=1280, height=720), InputFile.from_path("b.mp4", duration_ms=8000)],
+    caption="Saturday",
+)
+```
+
+The kind and the type are guessed from the name: a `.jpg` is a picture, a `.mp4` a clip,
+anything else a file (music included). A voice note is never guessed: pass
+`InputFile(data=..., kind="audio")`. Width, height and length are not read from the bytes; give
+them when you know them, and the phones draw the right box before they download anything.
+
+In a readable chat each file goes up as it is and the server writes the message. In an
+encrypted chat each file is sealed first to every member and to the bot, uploaded sealed, and
+the message that describes the files is sealed and signed like a text: the server sees neither
+the files nor their names. Every file carries its SHA-256, which the phones check. Files are at
+most 50 MB each (`bot.upload_max`), 30 uploads a minute; in a group they need the members'
+permission to send files, voice notes the one for voice notes.
+
+## Stickers
+
+```python
+await bot.send_sticker(chat_id, 4417)                     # a sticker of a public pack
+await bot.send_sticker(chat_id, message.sticker)          # one the bot was shown
+```
+
+A sticker of a pack that is not public needs its file ID as proof that the bot was shown it;
+`message.sticker` carries it. `bot.get_sticker(id)` says what a sticker is.
+
+## Forwarding
+
+```python
+await message.forward_to(archive_id)                       # with "forwarded from" over it
+await message.forward_to(archive_id, hide_sender=True)     # a plain copy
+await bot.forward_message(archive_id, chat_id, message_id)
+```
+
+Between two readable chats the server does it, and copies the files for the bot. When either
+chat is encrypted, the bot does it itself, as a phone would: it opens the message and its
+files, seals them again for the other chat, and sends them with "forwarded from" over them. A
+forward of a forward keeps the first origin. The bot can't know whether the person who wrote
+the message lets a forward link to their profile, so its forwards show their name without the
+link (the bot's own messages keep it).
+
+A readable chat takes from the bot only what the server writes for it, which has no "forwarded
+from": a message of an encrypted chat goes into a readable one only as a copy
+(`hide_sender=True`). Comments are not forwarded, and a chat that protects its content keeps
+its messages in.
+
+## Reactions, pins and read marks
+
+```python
+await message.react("👍")              # in place of the bot's earlier reaction, if any
+await message.remove_reaction()
+await message.pin()                    # for everybody in the chat
+await sent.unpin()
+await bot.unpin_all(group_id)
+await bot.read_chat(chat_id)           # the ticks people see
+```
+
+The rules of a person hold: in a group or channel reactions must be on and the emoji one the
+chat takes, pinning needs the right to pin, and marking a group or channel read needs the room
+to let the bot read every message (`ReadsAllNeededError` otherwise): a bot that only gets what
+is meant for it would show up as having read people it never saw.
+
+`@bot.on_reaction()` hears about the reactions people put on the messages the bot was handed
+([Events](events.md)).
+
+## History
+
+```python
+for message in await bot.get_history(chat_id, limit=100):    # newest first
+    print(message.date, message.from_user, message.text)
+
+older = await bot.get_history(chat_id, before=oldest_id)
+one = await bot.get_message(chat_id, message_id)
+```
+
+The history holds what the bot was handed, and nothing else: in a private chat every message,
+in a group or channel the bot's own messages and the ones the room delivered to it. What the
+room did not let it read stays out, even after the room lets it read everything. In an
+encrypted chat each message comes back decrypted, with its signature checked; one that can't be
+opened comes back as it is, with `text` left `None`.
+
+## Comments
+
+In a channel with comments, a comment reaches the bot by the same rule as a message (one under
+its post, one that answers its comment or names it, or any of them when the channel lets it
+read everything), at `@bot.on_comment()`. Answering it writes a comment under the same post:
+
+```python
+@bot.on_comment()
+async def thanks(comment):
+    await comment.reply("Thanks for the comment!")
+
+
+await bot.send_comment(channel_id, post_id, "Fixed, thanks.")
+page = await bot.get_comments(channel_id, post_id)      # page.open, page.messages
+```
+
+A bot that runs the channel comments as the channel, unless the channel lets its admins sign
+and you pass `as_author=True`. A comment carries no buttons and no `send_id`: the server keeps
+none for comments, so one is never sent twice by a retry.
+
 ## Editing
 
 `reply` and `send_message` return a `SentMessage`, which you can edit or delete later:
@@ -174,7 +302,8 @@ Or by ID:
 await bot.edit_message(chat_id, message_id, "New text")
 ```
 
-- The bot can edit only its own ordinary messages, at any age.
+- The bot can edit its own ordinary messages, at any age, and in a channel where it may edit
+  posts anybody's post (the words only). On a file the text is the caption.
 - In an encrypted chat the new text is encrypted like a send.
 - Leave `markup` out to keep the buttons; `markup=None` removes them.
 - Edits have their own rate limits: one per second in a private chat, twenty per minute in a
@@ -188,10 +317,12 @@ await sent.delete()                     # one of the bot's own
 await bot.delete_message(chat_id, message_id)
 ```
 
-The bot can delete its own messages anywhere, and other people's messages in a group or
-channel where it has the "delete messages" right. A message that is already gone raises
-`MessageNotFoundError`. After a timeout the library treats that error as "done", so a retry is
-safe.
+The bot can delete any message of a private chat, as either person can there; in a group or
+channel its own, other people's where it has the "delete messages" right, and any comment with
+the "manage comments" right. A post takes its comments with it. `bot.delete_messages(chat_id,
+ids)` deletes up to 100 at once, and deletes nothing if one of them is not the bot's to delete.
+A message that is already gone raises `MessageNotFoundError`. After a timeout the library
+treats that error as "done", so a retry is safe.
 
 ## Edited and deleted messages
 

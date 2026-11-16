@@ -9,7 +9,7 @@ test key if you can (never real material).
 
 ## Supported versions
 
-Security fixes go to the newest 0.1.x. Nothing older gets them.
+Security fixes go to the latest minor release. Nothing older gets them.
 
 The minimum versions of the dependencies are also picked for security: `httpx2>=2.13.1`
 includes the fixes for CVE-2026-84380 and CVE-2026-84382.

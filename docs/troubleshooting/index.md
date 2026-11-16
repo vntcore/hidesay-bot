@@ -19,8 +19,10 @@ paused, the webhook and the queue. Then look for your symptom below.
 
 ## The bot runs but gets nothing
 
-- **In a group:** with privacy mode on (the default) the bot only gets commands, replies to its
-  messages and mentions. `hidesay-bot whoami` shows `privacy mode on`. The owner can turn it off.
+- **In a group or channel:** until the room lets it read every message, the bot only gets
+  commands, mentions of it, replies to its messages and presses of its buttons. That is the
+  room's decision, made by an admin in the app: `(await bot.get_chat(chat_id)).reads_all` says
+  what the room decided. See [Groups and channels](../guides/groups-and-channels.md).
 - **In an encrypted group:** the bot needs a published key, or the phones can't seal messages
   to it.
 - **Two copies are polling:** the log says "another process is probably polling this bot".
@@ -42,7 +44,7 @@ paused, the webhook and the queue. Then look for your symptom below.
 | `WrongBodyKindError` (expected `text`) | the chat became readable while the bot sent an encrypted message | send again: the next message follows the new mode |
 | `BlockedByUserError` | the person blocked the bot | stop writing to them |
 | `ForbiddenError` | no right to write (a restricted bot, a channel where the bot is not an admin) | ask an admin |
-| `ChatNotFoundError` | the bot is not in that chat, or the ID is wrong | check the ID; a person must start a private chat first |
+| `ChatNotFoundError` | the bot is not in that chat, or the ID is wrong | check the ID; a person must start a private chat first, or let the bot write from its Web-Bot ({doc}`../guides/web-bot`) |
 | `FloodWaitError`, `SlowModeError` | too fast | see [Rate limits](../guides/rate-limiting.md) |
 | `ValidationError` | the request breaks a server rule; nothing was sent | `exc.field` names the problem |
 
@@ -52,7 +54,9 @@ paused, the webhook and the queue. Then look for your symptom below.
 |---|---|---|
 | `NotARecipientError` on new messages | the bot runs with a key that is not the published one | `whoami` shows the published fingerprint; load that key, or publish the one you have |
 | `NotARecipientError` after a rotation | messages sealed to the old key | add the old key to `pgp_previous_keys` for 72 hours |
-| `NotARecipientError` on attachments in a group | phones seal attachments only to the members' key list | turn the bot's privacy mode off, or skip attachments |
+| `NotARecipientError` on attachments in a group | phones seal attachments only to the group's key list, which has the bot in it only when the room lets it read every message | ask the room's admins, or skip attachments |
+| `MediaIntegrityError` on a download | the file is not the one its message describes: its SHA-256 differs | nothing to retry: the file was changed after it was sent |
+| `ReadsAllNeededError` marking a group read | only a bot the room lets read every message may | ask the room's admins, or don't mark it read |
 | `verification.status` is `not_checked` | checks are off, or the chat's keys could not be fetched | `verification.detail` says which |
 | `verification.status` is `unknown_key` | signed by a key that is not the one the server lists for the sender | check with the person |
 | `KeyChangedError` on incoming messages | `pin_keys=True` and the sender's key changed | check the new key with the person, `bot.trust_key()`, then `bot.retry_failed()` |

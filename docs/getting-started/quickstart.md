@@ -40,7 +40,7 @@ hidesay-bot whoami
 ```text
 @weatherbot (id B48213907) - Weather
 mode:     open
-status:   active, privacy mode on
+status:   active
 webhook:  none (polling)
 queued:   0 update(s)
 ```

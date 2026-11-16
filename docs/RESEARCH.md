@@ -19,9 +19,9 @@ reproduced on this machine with the real libraries.
 
 ## 1. The protocol, checked against the server
 
-The OpenAPI 3.1 spec describes 22 operations and one outgoing webhook (see
-[API_COVERAGE.md](API_COVERAGE.md)). Testing the real API showed details that the spec
-leaves out or describes only in part, and that the library must respect:
+The OpenAPI 3.1 spec described 22 operations and one outgoing webhook at the time; Bot API
+2.0.0 has 57 (see [API_COVERAGE.md](API_COVERAGE.md)). Testing the real API showed details that
+the spec leaves out or describes only in part, and that the library must respect:
 
 | Fact | What it means for the SDK |
 |---|---|
@@ -33,10 +33,10 @@ leaves out or describes only in part, and that the library must respect:
 | The webhook delivers one update at a time, in order, and retries the same one until it gets a 2xx | a 4xx to an authenticated delivery blocks the whole queue: avoid it |
 | The per-minute limiter always says `retryAfter: 60` in the body; the real time is in the `Retry-After` header | for `rate_limited` the SDK prefers the header |
 | `GET /me` returns more limits than the spec's example (for example `markupBytes`, `commandsPerScope`, `botsPerChat`) | the `Limits` model types the known ones and keeps all the others |
-| In readable chats the text arrives "cleaned": spaces at the ends removed, runs of empty lines folded, cut at 4000 characters | documented; in encrypted chats the SDK gives back the exact text |
+| In readable chats the text arrived "cleaned": spaces at the ends removed, runs of empty lines folded, cut at 4000 characters. Bot API 2.0.0 hands it over as it was written | nothing to document any more; in encrypted chats the SDK always gave back the exact text |
 | `media[].duration` is in milliseconds (the app writes `durationMs`) | the Python field is called `duration_ms` |
 | `GET /media/{id}` needs no authentication | the SDK downloads media without sending the token |
-| In encrypted groups the phone seals attachments only to the members in the group's key list, not to the bots it addresses | a bot in privacy mode can read the text but cannot download that group's attachments |
+| In encrypted groups the phone seals attachments only to the members in the group's key list, not to the bots it addresses | a bot reads the text addressed to it but cannot download that group's attachments, unless the room lets it read every message: then it is on the key list like a person |
 
 These points are also in the user documentation, where they matter.
 

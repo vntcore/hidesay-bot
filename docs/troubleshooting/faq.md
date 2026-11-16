@@ -34,8 +34,10 @@ No, as long as the keys it hands out are the real ones. It sees the metadata (wh
 long), and the buttons, which are never encrypted. See [Trusting keys](../CRYPTOGRAPHY.md#7-trusting-keys).
 
 **Why can't my bot read attachments in an encrypted group?**
-Phones seal attachments only to the group's key list, which includes the bot only when its
-privacy mode is off.
+Phones seal attachments only to the group's key list, which includes the bot only when the
+room lets it read every message. That is the room's decision, made by an admin in the app: the
+bot can say why it needs it, and nothing more (see
+[Groups and channels](../guides/groups-and-channels.md)).
 
 **Is the cryptography audited?**
 The library itself has not been audited. It uses two OpenPGP implementations (Sequoia PGP and
@@ -60,7 +62,8 @@ make important actions idempotent.
 
 **Can an update be lost?**
 Not by the library: an update is confirmed only once it is safe (saved or handled). The server
-keeps updates for 72 hours, so a bot that is off for longer loses the oldest.
+keeps updates for 72 hours, and drops the oldest when more than 10 000 pile up unread, so a bot
+that is off for longer, or falls that far behind, loses the oldest.
 
 **Can I run two copies of my bot for availability?**
 Not polling the same bot: they would starve each other. Run one, and let systemd, Docker or

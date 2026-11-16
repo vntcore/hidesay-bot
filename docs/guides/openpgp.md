@@ -153,8 +153,15 @@ async def photo(message):
 ```
 
 In a private chat with the bot this always works. In an encrypted group the phones seal
-attachments only to the members, so it works only if the bot's privacy mode is off. Otherwise
-it fails with `NotARecipientError`.
+attachments only to the group's key list, which has the bot in it only when the room lets it
+read every message. Otherwise it fails with `NotARecipientError`. When the message gives the
+file's SHA-256, the download is checked against it (`MediaIntegrityError` when it differs).
+
+Sending works the other way round: `bot.send_media` seals each file to the chat's keys and to
+the bot, uploads it sealed, and seals the message that describes it, so the server sees neither
+the file nor its name. Files go out unsigned, as the phones send them; the signed message
+carries their SHA-256. A forward into or out of an encrypted chat is done the same way, on the
+bot's side ([Messages](messages.md#forwarding)).
 
 ## 8. Rotating the key
 
@@ -190,6 +197,6 @@ four.
 |---|---|---|
 | `EncryptionError: nobody in chat ... has a key` | nobody in the chat has published a key | nothing to do: the chat cannot receive encrypted messages |
 | `EncryptionError` in a protected chat, at the first send | the bot has no private key loaded | pass `pgp_private_key` |
-| `NotARecipientError` | the message was not sealed to this key: an old key after a rotation, or a group message the phone did not address to the bot | add the old key to `pgp_previous_keys`; in groups, see privacy mode |
+| `NotARecipientError` | the message was not sealed to this key: an old key after a rotation, or a group message the phone did not address to the bot | add the old key to `pgp_previous_keys`; in groups, the room decides what the bot reads ([Groups and channels](groups-and-channels.md)) |
 | `PassphraseError` | wrong or missing passphrase | check `HIDESAY_BOT_KEY_PASSPHRASE` |
 | `WrongBodyKindError` | the chat became readable while the bot was sending an encrypted message | nothing: the next message follows the new mode. The library never resends in clear |

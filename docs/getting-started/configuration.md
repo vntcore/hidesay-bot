@@ -117,8 +117,8 @@ many bots that fail together don't all come back at the same moment.
 ## Logging
 
 The library logs under the `hidesay_bot` logger (`hidesay_bot.bot`, `hidesay_bot.client`,
-`hidesay_bot.crypto`, `hidesay_bot.engine`, `hidesay_bot.webhook`). It never logs the token, passphrases,
-private keys or message text.
+`hidesay_bot.crypto`, `hidesay_bot.engine`, `hidesay_bot.storage`, `hidesay_bot.webhook`). It never
+logs the token, passphrases, private keys or message text.
 
 `bot.run()` sets up basic logging at `INFO` level if your program has not set up logging
 itself. To do it yourself:

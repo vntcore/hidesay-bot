@@ -7,6 +7,8 @@ each operation to the code and the tests.
 
 - [Every operation](operations.md) shows each operation as a section of a page, generated from
   the file.
+- [Web-Bot reference](web-bots.md) is the document's guide to Web-Bots: setting one up,
+  `initData`, and every call a page can make with `window.Hidesay.WebBot`. Also generated.
 - {download}`Download openapi.json <../openapi.json>` to open it in any OpenAPI viewer or
   code generator.
 
