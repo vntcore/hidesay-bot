@@ -178,7 +178,7 @@ def _body(text: str | None, armored: str | None, *, required: bool, text_max: in
 
 
 def send_message(
-    chat_id: int,
+    chat_id: str | int,
     text: str | None = None,
     *,
     armored: str | None = None,
@@ -189,7 +189,8 @@ def send_message(
     chat_kind: ChatKind | None = None,
     text_max: int = v.TEXT_MAX,
 ) -> Call[SentMessageBase]:
-    body: dict[str, Any] = {"chatId": v.check_id(chat_id, "chat_id")}
+    chat_id = v.check_chat_id(chat_id)
+    body: dict[str, Any] = {"chatId": chat_id}
     body.update(_body(text, armored, required=True, text_max=text_max))
     if reply_to is not None:
         body["replyTo"] = v.check_id(reply_to, "reply_to")
@@ -213,7 +214,7 @@ def send_message(
 
 
 def edit_message(
-    chat_id: int,
+    chat_id: str | int,
     message_id: int,
     text: str | None = None,
     *,
@@ -223,7 +224,8 @@ def edit_message(
     text_max: int = v.TEXT_MAX,
 ) -> Call[SentMessageBase]:
     message_id = v.check_id(message_id, "message_id")
-    body: dict[str, Any] = {"chatId": v.check_id(chat_id, "chat_id")}
+    chat_id = v.check_chat_id(chat_id)
+    body: dict[str, Any] = {"chatId": chat_id}
     body.update(_body(text, armored, required=False, text_max=text_max))
     if markup is not KEEP:
         # null is meaningful here: it takes the buttons away
@@ -243,14 +245,14 @@ def edit_message(
     )
 
 
-def delete_message(chat_id: int, message_id: int) -> Call[bool]:
+def delete_message(chat_id: str | int, message_id: int) -> Call[bool]:
     message_id = v.check_id(message_id, "message_id")
     # chatId in the query: a body on DELETE is legal but some proxies drop it
     return Call(
         "DELETE",
         f"/messages/{message_id}",
         lambda r: _flag(r, "deleted"),
-        params={"chatId": v.check_id(chat_id, "chat_id")},
+        params={"chatId": v.check_chat_id(chat_id)},
         done_codes=frozenset({"message_not_found"}),
         done_value=True,
     )
@@ -294,22 +296,22 @@ def _path_segment(value: str) -> str:
 # --- Chats ---
 
 
-def get_chat(chat_id: int) -> Call[Chat]:
-    return Call("GET", f"/chats/{v.check_id(chat_id, 'chat_id')}", Chat.from_json)
+def get_chat(chat_id: str | int) -> Call[Chat]:
+    return Call("GET", f"/chats/{v.check_chat_id(chat_id)}", Chat.from_json)
 
 
-def get_chat_keys(chat_id: int) -> Call[ChatKeys]:
-    return Call("GET", f"/chats/{v.check_id(chat_id, 'chat_id')}/keys", ChatKeys.from_json)
+def get_chat_keys(chat_id: str | int) -> Call[ChatKeys]:
+    return Call("GET", f"/chats/{v.check_chat_id(chat_id)}/keys", ChatKeys.from_json)
 
 
-def get_chat_members(chat_id: int) -> Call[ChatMembers]:
-    return Call("GET", f"/chats/{v.check_id(chat_id, 'chat_id')}/members", ChatMembers.from_json)
+def get_chat_members(chat_id: str | int) -> Call[ChatMembers]:
+    return Call("GET", f"/chats/{v.check_chat_id(chat_id)}/members", ChatMembers.from_json)
 
 
-def get_chat_member(chat_id: int, user_id: int) -> Call[Member]:
+def get_chat_member(chat_id: str | int, user_id: str | int) -> Call[Member]:
     return Call(
         "GET",
-        f"/chats/{v.check_id(chat_id, 'chat_id')}/members/{v.check_id(user_id, 'user_id')}",
+        f"/chats/{v.check_chat_id(chat_id)}/members/{v.check_user_id(user_id)}",
         Member.from_json,
     )
 
@@ -318,10 +320,10 @@ def resolve(username: str) -> Call[Resolved]:
     return Call("GET", f"/resolve/{v.check_username(username)}", Resolved.from_json)
 
 
-def leave_chat(chat_id: int) -> Call[bool]:
+def leave_chat(chat_id: str | int) -> Call[bool]:
     return Call(
         "POST",
-        f"/chats/{v.check_id(chat_id, 'chat_id')}/leave",
+        f"/chats/{v.check_chat_id(chat_id)}/leave",
         lambda r: _flag(r, "left"),
         # gone from the chat: a repeat of a leave that worked finds no chat
         done_codes=frozenset({"chat_not_found"}),
@@ -329,11 +331,11 @@ def leave_chat(chat_id: int) -> Call[bool]:
     )
 
 
-def send_typing(chat_id: int, typing: bool = True) -> Call[bool]:
+def send_typing(chat_id: str | int, typing: bool = True) -> Call[bool]:
     # a typing indicator three seconds late is worse than none: no retries
     return Call(
         "POST",
-        f"/chats/{v.check_id(chat_id, 'chat_id')}/typing",
+        f"/chats/{v.check_chat_id(chat_id)}/typing",
         lambda r: _flag(r, "sent"),
         body={"typing": bool(typing)},
         has_body=True,
@@ -341,8 +343,8 @@ def send_typing(chat_id: int, typing: bool = True) -> Call[bool]:
     )
 
 
-def get_user_key(user_id: int) -> Call[UserKey]:
-    return Call("GET", f"/users/{v.check_id(user_id, 'user_id')}/key", UserKey.from_json)
+def get_user_key(user_id: str | int) -> Call[UserKey]:
+    return Call("GET", f"/users/{v.check_user_id(user_id)}/key", UserKey.from_json)
 
 
 # --- Token ---

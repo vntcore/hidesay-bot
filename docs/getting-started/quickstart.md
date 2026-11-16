@@ -38,7 +38,7 @@ hidesay-bot whoami
 ```
 
 ```text
-@weatherbot (id 412) - Weather
+@weatherbot (id B48213907) - Weather
 mode:     open
 status:   active, privacy mode on
 webhook:  none (polling)
@@ -83,7 +83,7 @@ python bot.py
 ```
 
 ```text
-2026-10-08 18:02:11,532 INFO    hidesay_bot.bot: running as @weatherbot (id 412, open)
+2026-10-08 18:02:11,532 INFO    hidesay_bot.bot: running as @weatherbot (id B48213907, open)
 ```
 
 Open a chat with your bot in the app and write `/start`. Then write anything else.

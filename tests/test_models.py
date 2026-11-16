@@ -61,9 +61,9 @@ from .fakeapi import MEDIA_ID, FakeAPI
 DATE_MS = 1791000000000
 DATE = datetime(2026, 10, 3, 4, 0, tzinfo=UTC)
 
-ANNA = {"id": 55, "username": "anna", "firstName": "Anna", "lastName": "Rossi", "isBot": False}
-PRIVATE = {"id": 7, "kind": "private"}
-GROUP = {"id": 300, "kind": "group", "title": "Dev room", "username": "devroom"}
+ANNA = {"id": "10000055", "username": "anna", "firstName": "Anna", "lastName": "Rossi", "isBot": False}
+PRIVATE = {"id": "10000007", "kind": "private"}
+GROUP = {"id": "G10000300", "kind": "group", "title": "Dev room", "username": "devroom"}
 
 
 def message_json(**fields: Any) -> dict[str, Any]:
@@ -176,7 +176,7 @@ def test_an_optional_date_out_of_range_is_dropped() -> None:
 def test_user_from_json() -> None:
     user = User.from_json(ANNA)
     assert (user.id, user.username, user.first_name, user.last_name, user.is_bot) == (
-        55,
+        "10000055",
         "anna",
         "Anna",
         "Rossi",
@@ -190,10 +190,10 @@ def test_user_from_json() -> None:
 @pytest.mark.parametrize(
     ("data", "full_name", "mention"),
     [
-        ({"id": 1, "firstName": "Bruno"}, "Bruno", "Bruno"),
-        ({"id": 1, "lastName": "Verdi"}, "Verdi", "Verdi"),
-        ({"id": 1, "username": "bruno"}, "@bruno", "@bruno"),
-        ({"id": 1}, "user 1", "user 1"),
+        ({"id": "10000001", "firstName": "Bruno"}, "Bruno", "Bruno"),
+        ({"id": "10000001", "lastName": "Verdi"}, "Verdi", "Verdi"),
+        ({"id": "10000001", "username": "bruno"}, "@bruno", "@bruno"),
+        ({"id": "10000001"}, "user 10000001", "user 10000001"),
     ],
 )
 def test_user_names_fall_back_sensibly(data: dict[str, Any], full_name: str, mention: str) -> None:
@@ -202,8 +202,8 @@ def test_user_names_fall_back_sensibly(data: dict[str, Any], full_name: str, men
     assert user.mention == mention
 
 
-@pytest.mark.parametrize("data", [{}, {"id": "55"}, {"id": True}, {"id": None}, "55", None])
-def test_user_needs_an_integer_id(data: Any) -> None:
+@pytest.mark.parametrize("data", [{}, {"id": ""}, {"id": True}, {"id": None}, "10000055", None])
+def test_user_needs_an_id(data: Any) -> None:
     with pytest.raises(PayloadError):
         User.from_json(data)
 
@@ -219,7 +219,7 @@ def test_payload_error_is_a_hidesay_bot_error_and_a_value_error() -> None:
 def test_chat_ref_kinds() -> None:
     private = ChatRef.from_json(PRIVATE)
     group = ChatRef.from_json(GROUP)
-    channel = ChatRef.from_json({"id": 9, "kind": "channel", "title": "News"})
+    channel = ChatRef.from_json({"id": "C10000009", "kind": "channel", "title": "News"})
     assert (private.is_private, private.is_group, private.is_channel) == (True, False, False)
     assert (group.is_private, group.is_group, group.is_channel) == (False, True, False)
     assert (channel.is_private, channel.is_group, channel.is_channel) == (False, False, True)
@@ -228,7 +228,7 @@ def test_chat_ref_kinds() -> None:
 
 
 def test_chat_ref_of_an_unknown_kind_is_none_of_the_three() -> None:
-    chat = ChatRef.from_json({"id": 9, "kind": "forum"})
+    chat = ChatRef.from_json({"id": "F10000009", "kind": "forum"})
     assert chat.kind == "forum"
     assert not chat.is_private
     assert not chat.is_group
@@ -236,15 +236,22 @@ def test_chat_ref_of_an_unknown_kind_is_none_of_the_three() -> None:
 
 
 def test_chat_ref_without_a_kind_is_taken_as_private() -> None:
-    assert ChatRef.from_json({"id": 9}).kind is ChatKind.PRIVATE
+    assert ChatRef.from_json({"id": "10000009"}).kind is ChatKind.PRIVATE
 
 
 def test_private_chat_from_json() -> None:
     data = {
-        "id": 7,
+        "id": "10000007",
         "kind": "private",
         "mode": "open",
-        "user": {"id": 55, "username": "anna", "firstName": "Anna", "lastName": None, "deleted": False, "hasKey": True},
+        "user": {
+            "id": "10000055",
+            "username": "anna",
+            "firstName": "Anna",
+            "lastName": None,
+            "deleted": False,
+            "hasKey": True,
+        },
         "blocked": False,
     }
     chat = Chat.from_json(data)
@@ -252,7 +259,7 @@ def test_private_chat_from_json() -> None:
     assert chat.mode is ChatMode.OPEN
     assert not chat.protected
     assert isinstance(chat.user, ChatPeer)
-    assert (chat.user.id, chat.user.has_key, chat.user.deleted) == (55, True, False)
+    assert (chat.user.id, chat.user.has_key, chat.user.deleted) == ("10000055", True, False)
     assert chat.blocked is False
     assert (chat.member_count, chat.history_visible, chat.slow_mode_seconds, chat.me) == (None, None, None, None)
 
@@ -284,12 +291,12 @@ def test_group_chat_from_json() -> None:
 
 def test_chat_without_a_mode_is_taken_as_encrypted() -> None:
     # the safe guess: sealing for a readable chat is refused without disclosing anything
-    assert Chat.from_json({"id": 7, "kind": "private"}).mode is ChatMode.PROTECTED
+    assert Chat.from_json({"id": "10000007", "kind": "private"}).mode is ChatMode.PROTECTED
 
 
 def test_bot_without_a_mode_is_protected_exactly_when_it_has_a_fingerprint() -> None:
-    assert BotInfo.from_json({"id": 412, "username": "b", "name": "B"}).mode is ChatMode.OPEN
-    published = BotInfo.from_json({"id": 412, "username": "b", "name": "B", "fingerprint": "AB" * 20})
+    assert BotInfo.from_json({"id": "B10000412", "username": "b", "name": "B"}).mode is ChatMode.OPEN
+    published = BotInfo.from_json({"id": "B10000412", "username": "b", "name": "B", "fingerprint": "AB" * 20})
     assert published.mode is ChatMode.PROTECTED
 
 
@@ -302,13 +309,13 @@ def test_a_resolved_person_carries_the_id_at_the_top() -> None:
     found = Resolved.from_json(
         {
             "kind": "user",
-            "id": 55,
+            "id": "10000055",
             "username": "anna",
-            "user": {"id": 55, "username": "anna", "firstName": "Anna", "isBot": False, "hasKey": True},
+            "user": {"id": "10000055", "username": "anna", "firstName": "Anna", "isBot": False, "hasKey": True},
             "chat": None,
         }
     )
-    assert (found.kind, found.id, found.username, found.mention) == (HandleKind.USER, 55, "anna", "@anna")
+    assert (found.kind, found.id, found.username, found.mention) == (HandleKind.USER, "10000055", "anna", "@anna")
     assert (found.is_user, found.is_chat) == (True, False)
     assert isinstance(found.user, ChatPeer)
     assert (found.user.full_name, found.user.has_key, found.user.is_bot) == ("Anna", True, False)
@@ -319,11 +326,11 @@ def test_a_resolved_channel_is_a_card_that_can_be_passed_as_a_chat() -> None:
     found = Resolved.from_json(
         {
             "kind": "channel",
-            "id": 40,
+            "id": "C10000040",
             "username": "notizie",
             "user": None,
             "chat": {
-                "id": 40,
+                "id": "C10000040",
                 "kind": "channel",
                 "title": "Notizie",
                 "username": "notizie",
@@ -337,33 +344,33 @@ def test_a_resolved_channel_is_a_card_that_can_be_passed_as_a_chat() -> None:
     assert found.user is None
     assert isinstance(found.chat, ChatCard)
     assert found.chat.is_channel
-    assert (found.chat.id, found.chat.member_count, found.chat.history_visible) == (40, 1280, True)
+    assert (found.chat.id, found.chat.member_count, found.chat.history_visible) == ("C10000040", 1280, True)
     assert (found.chat.description, found.chat.title) == ("ogni mattina", "Notizie")
     # a ChatRef is what every chat method takes, and a card is one
     assert isinstance(found.chat, ChatRef)
 
 
 def test_a_resolved_handle_of_an_unknown_kind_is_neither() -> None:
-    found = Resolved.from_json({"kind": "forum", "id": 3})
+    found = Resolved.from_json({"kind": "forum", "id": "F10000003"})
     assert found.kind == "forum"
     assert not found.is_user
     assert not found.is_chat
-    assert found.mention == "id 3"
+    assert found.mention == "id F10000003"
 
 
 def test_a_bare_user_object_is_read_as_a_person() -> None:
     # no kind: the only shape that has ever meant anything else is a chat
-    found = Resolved.from_json({"id": 55, "user": {"id": 55}})
+    found = Resolved.from_json({"id": "10000055", "user": {"id": "10000055"}})
     assert found.kind is HandleKind.USER
     assert found.user is not None
-    assert found.user.id == 55
+    assert found.user.id == "10000055"
 
 
 def test_a_resolved_handle_needs_an_id() -> None:
     with pytest.raises(PayloadError, match=r"resolved\.id"):
         Resolved.from_json({"kind": "user", "username": "anna"})
     with pytest.raises(PayloadError, match=r"resolved\.chat"):
-        Resolved.from_json({"kind": "group", "id": 9, "chat": {"kind": "group"}})
+        Resolved.from_json({"kind": "group", "id": "G10000009", "chat": {"kind": "group"}})
 
 
 def test_admin_seat_carries_rights() -> None:
@@ -440,35 +447,37 @@ def test_member_needs_a_user() -> None:
 
 
 def test_chat_members_counts_itself_when_the_server_does_not() -> None:
-    members = [{"user": ANNA, "status": "admin"}, {"user": {"id": 56}, "status": "member"}]
+    members = [{"user": ANNA, "status": "admin"}, {"user": {"id": "10000056"}, "status": "member"}]
     assert ChatMembers.from_json({"members": members, "memberCount": 40}).member_count == 40
     listed = ChatMembers.from_json({"members": members})
     assert listed.member_count == 2
-    assert [m.user.id for m in listed.members] == [55, 56]
+    assert [m.user.id for m in listed.members] == ["10000055", "10000056"]
 
 
 def test_chat_keys_of_a_group() -> None:
     keys = ChatKeys.from_json(
         {
-            "keys": [{"userId": 55, "fingerprint": "AB" * 20, "publicKey": "-----BEGIN PGP PUBLIC KEY BLOCK-----..."}],
+            "keys": [
+                {"userId": "10000055", "fingerprint": "AB" * 20, "publicKey": "-----BEGIN PGP PUBLIC KEY BLOCK-----..."}
+            ],
             "memberCount": 3,
         }
     )
     assert keys.member_count == 3
     assert keys.keys == (
-        UserKey(user_id=55, fingerprint="AB" * 20, public_key="-----BEGIN PGP PUBLIC KEY BLOCK-----..."),
+        UserKey(user_id="10000055", fingerprint="AB" * 20, public_key="-----BEGIN PGP PUBLIC KEY BLOCK-----..."),
     )
 
 
 def test_chat_keys_of_a_private_chat_has_no_member_count() -> None:
-    keys = ChatKeys.from_json({"keys": [{"userId": 55, "fingerprint": None, "publicKey": "k"}]})
+    keys = ChatKeys.from_json({"keys": [{"userId": "10000055", "fingerprint": None, "publicKey": "k"}]})
     assert keys.member_count is None
     assert keys.keys[0].fingerprint is None
 
 
 @pytest.mark.parametrize("missing", ["userId", "publicKey"])
 def test_user_key_needs_the_user_and_the_key(missing: str) -> None:
-    data = without({"userId": 55, "fingerprint": None, "publicKey": "k"}, missing)
+    data = without({"userId": "10000055", "fingerprint": None, "publicKey": "k"}, missing)
     with pytest.raises(PayloadError):
         UserKey.from_json(data)
     with pytest.raises(PayloadError):
@@ -484,7 +493,7 @@ def test_published_key() -> None:
 
 def me_json(**fields: Any) -> dict[str, Any]:
     data: dict[str, Any] = {
-        "id": 412,
+        "id": "B10000412",
         "username": "testbot",
         "name": "Test",
         "about": "weather",
@@ -504,7 +513,7 @@ def me_json(**fields: Any) -> dict[str, Any]:
 
 def test_bot_info_from_json() -> None:
     me = BotInfo.from_json(me_json())
-    assert (me.id, me.username, me.name, me.about, me.description) == (412, "testbot", "Test", "weather", None)
+    assert (me.id, me.username, me.name, me.about, me.description) == ("B10000412", "testbot", "Test", "weather", None)
     assert me.mode is ChatMode.PROTECTED
     assert me.protected
     assert me.status is BotStatus.PAUSED
@@ -520,7 +529,7 @@ def test_bot_info_from_json() -> None:
 
 
 def test_bot_info_defaults_when_the_server_leaves_things_out() -> None:
-    me = BotInfo.from_json({"id": 412})
+    me = BotInfo.from_json({"id": "B10000412"})
     assert (me.username, me.name, me.mode, me.status) == ("", "", ChatMode.OPEN, BotStatus.ACTIVE)
     assert (me.privacy_mode, me.allow_groups, me.queued, me.fingerprint) == (True, True, 0, None)
     assert me.webhook.url is None
@@ -655,8 +664,14 @@ def test_readable_message_from_json() -> None:
         media=[{"id": MEDIA_ID, "kind": "image", "mime": "image/jpeg", "url": f"/media/{MEDIA_ID}", "width": 640}],
     )
     message = MessageBase.from_json(data)
-    assert (message.id, message.chat_id, message.reply_to, message.kind, message.text) == (99, 7, 42, "user", "look")
-    assert message.chat == ChatRef(id=7, kind=ChatKind.PRIVATE)
+    assert (message.id, message.chat_id, message.reply_to, message.kind, message.text) == (
+        99,
+        "10000007",
+        42,
+        "user",
+        "look",
+    )
+    assert message.chat == ChatRef(id="10000007", kind=ChatKind.PRIVATE)
     assert message.from_user == User.from_json(ANNA)
     assert message.date == DATE
     assert message.media == (Media(id=MEDIA_ID, kind="image", mime="image/jpeg", url=f"/media/{MEDIA_ID}", width=640),)
@@ -675,7 +690,7 @@ def test_armored_message_from_json() -> None:
 
 
 def test_channel_post_without_a_sender() -> None:
-    data = message_json(chat={"id": 9, "kind": "channel", "title": "News"}, signature="The editor")
+    data = message_json(chat={"id": "C10000009", "kind": "channel", "title": "News"}, signature="The editor")
     data["from"] = None
     message = MessageBase.from_json(data)
     assert message.from_user is None
@@ -776,8 +791,8 @@ def test_sent_message_needs_id_chat_and_date(missing: str) -> None:
 def test_callback_query_from_json() -> None:
     query = CallbackQueryBase.from_json(callback_json())
     assert (query.id, query.message_id, query.data) == ("cb-1", 1001, "hourly:rome")
-    assert query.from_user.id == 55
-    assert query.chat.id == 7
+    assert query.from_user.id == "10000055"
+    assert query.chat.id == "10000007"
     assert query.expires_at == DATE + timedelta(seconds=60)
 
 
@@ -830,7 +845,7 @@ def test_callback_query_update() -> None:
     assert update.event is update.callback_query
     assert update.chat == update.callback_query.chat
     assert update.from_user is not None
-    assert update.from_user.id == 55
+    assert update.from_user.id == "10000055"
     assert update.message is None
 
 
@@ -863,7 +878,7 @@ def test_my_chat_member_update() -> None:
     assert (change.old.status, change.new.status, change.new.rights) == (SeatStatus.LEFT, SeatStatus.MEMBER, 255)
     assert change.date == DATE
     assert update.from_user is not None
-    assert update.from_user.id == 55
+    assert update.from_user.id == "10000055"
     assert update.chat is change.chat
     assert update.event is change
 
@@ -942,7 +957,10 @@ def test_chat_member_update_helpers(kind: str, old: str, new: str, expected: set
         {
             "updateId": 1,
             "kind": "my_chat_member",
-            "chat": {"id": 1, "kind": kind},
+            "chat": {
+                "id": "G10000001" if kind == "group" else "C10000001" if kind == "channel" else "10000001",
+                "kind": kind,
+            },
             "old": {"status": old},
             "new": {"status": new},
         }
@@ -1006,7 +1024,7 @@ def test_bind_keeps_every_field_and_adds_the_bot(bound: Any, base: Any, data: Ca
 def test_bind_carries_the_decrypted_parts_over() -> None:
     plain = MessageBase(
         id=1,
-        chat=ChatRef(id=7, kind=ChatKind.PRIVATE),
+        chat=ChatRef(id="10000007", kind=ChatKind.PRIVATE),
         from_user=None,
         date=DATE,
         text="ciao",
@@ -1030,17 +1048,17 @@ async def test_message_reply_quotes_and_answer_does_not() -> None:
     assert bot.calls == [
         (
             "send_message",
-            (7, "pong"),
+            ("10000007", "pong"),
             {"reply_to": 99, "markup": kb, "silent": True, "encrypt": None, "send_id": "sid"},
         ),
         (
             "send_message",
-            (7, "no quote"),
+            ("10000007", "no quote"),
             {"reply_to": None, "markup": None, "silent": False, "encrypt": None, "send_id": None},
         ),
         (
             "send_message",
-            (7, "plain"),
+            ("10000007", "plain"),
             {"reply_to": None, "markup": None, "silent": False, "encrypt": True, "send_id": None},
         ),
     ]
@@ -1053,9 +1071,9 @@ async def test_message_delete_and_typing() -> None:
     assert await message.typing() is True
     await message.typing(False)
     assert bot.calls == [
-        ("delete_message", (7, 99), {}),
-        ("send_typing", (7, True), {}),
-        ("send_typing", (7, False), {}),
+        ("delete_message", ("10000007", 99), {}),
+        ("send_typing", ("10000007", True), {}),
+        ("send_typing", ("10000007", False), {}),
     ]
 
 
@@ -1065,10 +1083,10 @@ async def test_sent_message_edit_keeps_the_buttons_unless_told_otherwise() -> No
     await sent.edit("new words")
     await sent.edit(markup=None)
     await sent.delete()
-    assert bot.calls[0] == ("edit_message", (7, 1001, "new words"), {"markup": KEEP, "encrypt": None})
+    assert bot.calls[0] == ("edit_message", ("10000007", 1001, "new words"), {"markup": KEEP, "encrypt": None})
     assert bot.calls[0][2]["markup"] is KEEP
-    assert bot.calls[1] == ("edit_message", (7, 1001, None), {"markup": None, "encrypt": None})
-    assert bot.calls[2] == ("delete_message", (7, 1001), {})
+    assert bot.calls[1] == ("edit_message", ("10000007", 1001, None), {"markup": None, "encrypt": None})
+    assert bot.calls[2] == ("delete_message", ("10000007", 1001), {})
 
 
 async def test_callback_query_actions_target_the_pressed_message() -> None:
@@ -1080,9 +1098,9 @@ async def test_callback_query_actions_target_the_pressed_message() -> None:
     await query.send("new one")
     assert bot.calls == [
         ("answer_callback", ("cb-1", "Saved"), {"alert": True, "url": None}),
-        ("edit_message", (7, 1001, "updated"), {"markup": KEEP, "encrypt": None}),
-        ("delete_message", (7, 1001), {}),
-        ("send_message", (7, "new one"), {"markup": None, "encrypt": None}),
+        ("edit_message", ("10000007", 1001, "updated"), {"markup": KEEP, "encrypt": None}),
+        ("delete_message", ("10000007", 1001), {}),
+        ("send_message", ("10000007", "new one"), {"markup": None, "encrypt": None}),
     ]
 
 
@@ -1104,22 +1122,22 @@ def test_sync_twins_call_the_same_methods() -> None:
     assert bot.calls == [
         (
             "send_message",
-            (7, "pong"),
+            ("10000007", "pong"),
             {"reply_to": 99, "markup": None, "silent": False, "encrypt": None, "send_id": None},
         ),
         (
             "send_message",
-            (7, "plain"),
+            ("10000007", "plain"),
             {"reply_to": None, "markup": None, "silent": False, "encrypt": None, "send_id": None},
         ),
-        ("delete_message", (7, 99), {}),
-        ("send_typing", (7, True), {}),
-        ("edit_message", (7, 1001, "again"), {"markup": KEEP, "encrypt": None}),
-        ("delete_message", (7, 1001), {}),
+        ("delete_message", ("10000007", 99), {}),
+        ("send_typing", ("10000007", True), {}),
+        ("edit_message", ("10000007", 1001, "again"), {"markup": KEEP, "encrypt": None}),
+        ("delete_message", ("10000007", 1001), {}),
         ("answer_callback", ("cb-1", None), {"alert": False, "url": "https://example.org/game"}),
-        ("edit_message", (7, 1001, None), {"markup": None, "encrypt": None}),
-        ("delete_message", (7, 1001), {}),
-        ("send_message", (7, "more"), {"markup": None, "encrypt": None}),
+        ("edit_message", ("10000007", 1001, None), {"markup": None, "encrypt": None}),
+        ("delete_message", ("10000007", 1001), {}),
+        ("send_message", ("10000007", "more"), {"markup": None, "encrypt": None}),
     ]
 
 
@@ -1194,7 +1212,7 @@ async def test_reply_goes_out_quoting_the_message(bot: Bot, fake: FakeAPI) -> No
     await message.answer("unquoted")
     first, second = fake.calls("POST", "/bot/v1/messages")
     assert first["json"]["replyTo"] == 99
-    assert first["json"]["chatId"] == 7
+    assert first["json"]["chatId"] == "10000007"
     assert first["json"]["text"] == "pong"
     assert "replyTo" not in second["json"]
     assert isinstance(sent, SentMessage)
@@ -1207,12 +1225,12 @@ async def test_edit_on_the_wire_keeps_or_drops_the_buttons(bot: Bot, fake: FakeA
     await sent.edit("still picking")
     await sent.edit(markup=None)
     keep, drop = fake.calls("PATCH", r"/bot/v1/messages/\d+")
-    assert keep["json"] == {"chatId": 7, "text": "still picking"}
-    assert drop["json"] == {"chatId": 7, "markup": None}
+    assert keep["json"] == {"chatId": "10000007", "text": "still picking"}
+    assert drop["json"] == {"chatId": "10000007", "markup": None}
 
 
 async def test_callback_answer_on_the_wire(bot: Bot, fake: FakeAPI) -> None:
-    callback_id = fake.push_callback(7, 1001, "a")
+    callback_id = fake.push_callback("10000007", 1001, "a")
     payload = fake.queue[-1]["callback"]
     query = CallbackQuery.bind(CallbackQueryBase.from_json(payload), bot)
     assert await query.answer("done") is True

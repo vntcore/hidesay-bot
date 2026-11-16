@@ -574,16 +574,27 @@ any case, but not glued to a letter, a digit or ``_`` on either side.
 """
 
 
-def _ids_and_names(values: Iterable[int | str]) -> tuple[set[int], set[str]]:
-    ids: set[int] = set()
+_ID_SHAPE = re.compile(r"[BGCbgc]?[1-9][0-9]{7}")
+
+
+def _ids_and_names(values: Iterable[int | str]) -> tuple[set[str], set[str]]:
+    ids: set[str] = set()
     names: set[str] = set()
     for value in values:
         if isinstance(value, bool):
             raise TypeError("a user or chat must be an id or a @handle, not a bool")
         if isinstance(value, int):
-            ids.add(value)
-        else:
-            names.add(str(value).lstrip("@").lower())
+            ids.add(str(value))
+            continue
+        text = str(value).strip()
+        # shaped like an id it is the id and nothing else. Anybody can pick 48213907 as
+        # a handle, and that must not get them through a filter written for whoever has
+        # the id. The @ in front is how to mean a handle made of digits
+        if not text.startswith("@") and _ID_SHAPE.fullmatch(text):
+            ids.add(text.upper())
+        elif name := text.lstrip("@").lower():
+            # "" would match everybody who has no handle at all
+            names.add(name)
     return ids, names
 
 
@@ -591,7 +602,10 @@ def user(*who: int | str) -> Filter:
     """Makes a filter for messages and button presses from one of these people.
 
     Args:
-        *who: User IDs (``int``) and handles (``str``, with or without ``@``, in any case).
+        *who: User IDs (``"48213907"``, ``"B48213907"`` for a bot; a person's also as an
+            ``int``) and handles (with or without ``@``, in any case). A string shaped like
+            an ID is only ever that ID, never a handle somebody picked to look like it; write
+            ``"@48213907"`` for a handle made of digits. An empty string matches nobody.
 
     Returns:
         A filter that matches when the sender (``from_user``) is one of them. A post that
@@ -618,8 +632,9 @@ def chat(*which: int | str) -> Filter:
     """Makes a filter for events in one of these chats.
 
     Args:
-        *which: Chat IDs (``int``) and the public handles of groups and channels (``str``,
-            with or without ``@``, in any case).
+        *which: Chat IDs (``"G48213907"``, ``"C48213907"``, or a person's ID for the
+            private chat with them) and the public handles of groups and channels (with or
+            without ``@``, in any case).
 
     Returns:
         A filter that matches when the event's chat is one of them.

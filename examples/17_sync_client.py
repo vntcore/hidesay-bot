@@ -1,7 +1,7 @@
 """No asyncio at all: the blocking client in a script, and SyncBot.
 
     export HIDESAY_BOT_TOKEN="pgpbot_..."
-    python examples/17_sync_client.py report 7781 "Nightly backup: OK"
+    python examples/17_sync_client.py report 48213907 "Nightly backup: OK"
     python examples/17_sync_client.py bot
 
 `report` sends one message and exits, the way a cron job would. `bot` runs a
@@ -13,7 +13,7 @@ import sys
 from hidesay_bot import APIError, Client, NetworkError, SyncBot
 
 
-def report(chat_id: int, text: str) -> int:
+def report(chat_id: str, text: str) -> int:
     with Client() as api:
         try:
             me = api.get_me()
@@ -42,7 +42,7 @@ def run_bot() -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "report":
-        raise SystemExit(report(int(sys.argv[2]), sys.argv[3]))
+        raise SystemExit(report(sys.argv[2], sys.argv[3]))
     if len(sys.argv) == 2 and sys.argv[1] == "bot":
         run_bot()
     else:

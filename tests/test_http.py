@@ -39,7 +39,7 @@ from hidesay_bot.errors import (
     ValidationError,
 )
 
-from .fakeapi import TOKEN
+from .fakeapi import BOT_ID, TOKEN
 
 SECRET_PART = TOKEN.split(".", 1)[1]
 CALL: Call[Any] = Call("POST", "/messages", lambda result: result)
@@ -64,8 +64,8 @@ def upper_bound_jitter(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, flo
 
 
 def test_parse_token_returns_the_bot_id() -> None:
-    assert parse_token(TOKEN) == 412
-    assert parse_token(f"  {TOKEN}\n") == 412
+    assert parse_token(TOKEN) == BOT_ID
+    assert parse_token(f"  {TOKEN}\n") == BOT_ID
     assert parse_token("pgpbot_" + "9" * 16 + "." + "a-_Z" * 10 + "x0Y") == 9_999_999_999_999_999
 
 
@@ -78,9 +78,9 @@ def test_parse_token_returns_the_bot_id() -> None:
         TOKEN + "A",
         TOKEN.replace("pgpbot_", "pgpbot-"),
         TOKEN.replace("pgpbot_", "PGPBOT_"),
-        TOKEN.replace("_412.", "_0412."),
-        TOKEN.replace("_412.", "_0."),
-        TOKEN.replace("_412.", "_" + "1" * 17 + "."),
+        TOKEN.replace(f"_{BOT_ID}.", f"_0{BOT_ID}."),
+        TOKEN.replace(f"_{BOT_ID}.", "_0."),
+        TOKEN.replace(f"_{BOT_ID}.", "_" + "1" * 17 + "."),
         TOKEN[:-1] + "=",
         TOKEN[:-1] + " ",
         f"{TOKEN} {TOKEN}",
@@ -109,7 +109,7 @@ def test_parse_token_wants_a_string(token: Any) -> None:
 
 
 def test_mask_token_shows_the_id_and_the_last_four() -> None:
-    assert mask_token(TOKEN) == "pgpbot_412.****AAAA"
+    assert mask_token(TOKEN) == f"pgpbot_{BOT_ID}.****AAAA"
     token = "pgpbot_7." + "x" * 39 + "3f2a"
     assert mask_token(token) == "pgpbot_7.****3f2a"
     assert mask_token(f" {token} ") == "pgpbot_7.****3f2a"

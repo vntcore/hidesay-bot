@@ -3,9 +3,10 @@
     export HIDESAY_BOT_TOKEN="pgpbot_..."
     export HIDESAY_BOT_KEY_FILE=bot-key.asc          # for encrypted chats
     export HIDESAY_BOT_KEY_PASSPHRASE="..."
-    python examples/12_send_encrypted_message.py 7781 "The backup finished."
+    python examples/12_send_encrypted_message.py 48213907 "The backup finished."
 
-The bot can only write into chats it is in. `--by-hand` shows the same steps
+The chat is a person's ID for the private chat with them, G48213907 for a group,
+C48213907 for a channel. The bot can only write into chats it is in. `--by-hand` shows the same steps
 without the automatic part: fetch the members' keys, seal, send armored.
 """
 
@@ -17,7 +18,7 @@ from hidesay_bot import Bot, ChatMode, PublicKey
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("chat_id", type=int)
+    parser.add_argument("chat_id", help="48213907 (a person), G48213907 (a group), C48213907 (a channel)")
     parser.add_argument("text")
     parser.add_argument("--by-hand", action="store_true")
     args = parser.parse_args()

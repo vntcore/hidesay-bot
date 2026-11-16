@@ -330,7 +330,7 @@ class Storage(ABC):
         ...
 
     @abstractmethod
-    def get_pin(self, user_id: int) -> str | None:
+    def get_pin(self, user_id: str) -> str | None:
         """Reads the key fingerprint pinned for a person.
 
         With ``pin_keys=True`` the bot calls it each time it checks a person's key: before it
@@ -345,7 +345,7 @@ class Storage(ABC):
         ...
 
     @abstractmethod
-    def set_pin(self, user_id: int, fingerprint: str) -> None:
+    def set_pin(self, user_id: str, fingerprint: str) -> None:
         """Pins a key fingerprint for a person, replacing any earlier pin.
 
         Called with ``pin_keys=True`` the first time the bot sees a person's key, and by
@@ -433,7 +433,7 @@ class MemoryStorage(Storage):
         self._inbox: dict[int, Mapping[str, Any]] = {}
         self._runs: dict[int, int] = {}
         self._failed: dict[int, FailedUpdate] = {}
-        self._pins: dict[int, str] = {}
+        self._pins: dict[str, str] = {}
         self._held = False
 
     def open(self, bot_id: int) -> None:
@@ -607,7 +607,7 @@ class MemoryStorage(Storage):
                 del self._failed[uid]
             return len(ids)
 
-    def get_pin(self, user_id: int) -> str | None:
+    def get_pin(self, user_id: str) -> str | None:
         """Reads the key fingerprint pinned for a person.
 
         Args:
@@ -619,7 +619,7 @@ class MemoryStorage(Storage):
         with self._lock:
             return self._pins.get(user_id)
 
-    def set_pin(self, user_id: int, fingerprint: str) -> None:
+    def set_pin(self, user_id: str, fingerprint: str) -> None:
         """Pins a key fingerprint for a person, in upper case, replacing any earlier pin.
 
         Args:
@@ -653,6 +653,7 @@ CREATE TABLE IF NOT EXISTS failed (
 );
 CREATE TABLE IF NOT EXISTS pins (
     bot_id INTEGER NOT NULL,
+    -- declared when ids were plain numbers: a B48213907 goes in as text, sqlite lets it
     user_id INTEGER NOT NULL,
     fingerprint TEXT NOT NULL,
     pinned_at REAL NOT NULL,
@@ -1227,7 +1228,7 @@ class SQLiteStorage(Storage):
 
     # --- pins ---
 
-    def get_pin(self, user_id: int) -> str | None:
+    def get_pin(self, user_id: str) -> str | None:
         """Reads the key fingerprint pinned for a person.
 
         Args:
@@ -1241,7 +1242,7 @@ class SQLiteStorage(Storage):
             row = db.execute("SELECT fingerprint FROM pins WHERE bot_id = ? AND user_id = ?", (bot, user_id)).fetchone()
             return row[0] if row else None
 
-    def set_pin(self, user_id: int, fingerprint: str) -> None:
+    def set_pin(self, user_id: str, fingerprint: str) -> None:
         """Pins a key fingerprint for a person, in upper case, replacing any earlier pin.
 
         Args:

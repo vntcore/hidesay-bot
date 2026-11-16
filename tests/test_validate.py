@@ -83,6 +83,35 @@ def test_check_id_refuses_anything_but_a_positive_int(value: object) -> None:
     assert info.value.field == "chat_id"
 
 
+@pytest.mark.parametrize(
+    ("value", "clean"),
+    [(48213907, "48213907"), ("48213907", "48213907"), (" g48213907 ", "G48213907"), ("C10000000", "C10000000")],
+)
+def test_check_chat_id_takes_the_public_forms(value: object, clean: str) -> None:
+    assert v.check_chat_id(value) == clean
+
+
+@pytest.mark.parametrize(
+    "value",
+    [7, 9999999, 100000000, "01234567", "G01234567", "B48213907", "X48213907", "G4821390", "", None, True, 4.8e7],
+)
+def test_check_chat_id_refuses_the_rest(value: object) -> None:
+    with pytest.raises(ValidationError) as info:
+        v.check_chat_id(value)
+    assert info.value.field == "chat_id"
+
+
+@pytest.mark.parametrize(("value", "clean"), [(99999999, "99999999"), ("b48213907", "B48213907")])
+def test_check_user_id_takes_a_person_or_a_bot(value: object, clean: str) -> None:
+    assert v.check_user_id(value) == clean
+
+
+@pytest.mark.parametrize("value", ["G48213907", "C48213907", "01234567", "B01234567", 10**8, False])
+def test_check_user_id_refuses_chats_and_numbers_outside_the_pool(value: object) -> None:
+    with pytest.raises(ValidationError):
+        v.check_user_id(value)
+
+
 def test_validation_error_is_a_hidesay_bot_error_and_a_value_error() -> None:
     with pytest.raises(ValidationError) as info:
         v.check_id(True, "chat_id")
@@ -304,13 +333,28 @@ def test_check_scope_defaults_to_default(scope: object) -> None:
     assert v.check_scope(scope) == "default"
 
 
-@pytest.mark.parametrize("scope", ["default", "private", "groups", "groupAdmins", "chat:1", "chat:123456789012"])
+@pytest.mark.parametrize("scope", ["default", "private", "groups", "groupAdmins", "chat:G48213907", "chat:C10000001"])
 def test_check_scope_accepts_the_documented_scopes(scope: str) -> None:
     assert v.check_scope(scope) == scope
 
 
 @pytest.mark.parametrize(
-    "scope", ["Default", "groupadmins", "admins", "chat:", "chat:-5", "chat:1234567890123", "chat: 12", 5, True]
+    "scope",
+    [
+        "Default",
+        "groupadmins",
+        "admins",
+        "chat:",
+        "chat:-5",
+        "chat:1",
+        "chat:48213907",
+        "chat:B48213907",
+        "chat:g48213907",
+        "chat:G01234567",
+        "chat: 12",
+        5,
+        True,
+    ],
 )
 def test_check_scope_refuses_anything_else(scope: object) -> None:
     with pytest.raises(ValidationError, match="unknown scope") as info:
@@ -318,13 +362,19 @@ def test_check_scope_refuses_anything_else(scope: object) -> None:
     assert info.value.field == "scope"
 
 
-@pytest.mark.parametrize("scope", ["default\n", "chat:42\n"])
+@pytest.mark.parametrize("scope", ["default\n", "chat:G48213907\n"])
 def test_check_scope_refuses_a_trailing_newline(scope: str) -> None:
     with pytest.raises(ValidationError):
         v.check_scope(scope)
 
 
-@pytest.mark.parametrize("scope", ["chat:\u0661\u0662\u0663", "chat:\uff14\uff12"])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "chat:G\u0664\u0668\u0662\u0661\u0663\u0669\u0660\u0667",
+        "chat:C\uff14\uff18\uff12\uff11\uff13\uff19\uff10\uff17",
+    ],
+)
 def test_check_scope_chat_ids_are_ascii_digits(scope: str) -> None:
     with pytest.raises(ValidationError):
         v.check_scope(scope)

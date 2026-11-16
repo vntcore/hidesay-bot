@@ -7,15 +7,24 @@ from typing import Any
 
 import pytest
 
-from hidesay_bot import CallbackQueryBase, ChatKind, MessageBase, ParsedCommand, SignatureStatus, Update, Verification
+from hidesay_bot import (
+    CallbackQueryBase,
+    ChatKind,
+    ChatRef,
+    MessageBase,
+    ParsedCommand,
+    SignatureStatus,
+    Update,
+    Verification,
+)
 from hidesay_bot import filters as f
 from hidesay_bot.filters import Filter, FilterContext, merge, parse_command
 
-ANNA = {"id": 55, "username": "Anna_R", "firstName": "Anna", "lastName": None, "isBot": False}
+ANNA = {"id": "10000055", "username": "Anna_R", "firstName": "Anna", "lastName": None, "isBot": False}
 CHATS = {
-    "private": {"id": 7, "kind": "private"},
-    "group": {"id": 300, "kind": "group", "title": "Dev", "username": "DevRoom"},
-    "channel": {"id": 900, "kind": "channel", "title": "News", "username": None},
+    "private": {"id": "10000055", "kind": "private"},
+    "group": {"id": "G10000300", "kind": "group", "title": "Dev", "username": "DevRoom"},
+    "channel": {"id": "C10000900", "kind": "channel", "title": "News", "username": None},
 }
 
 
@@ -283,7 +292,7 @@ async def test_or_accepts_a_left_side_that_passed_with_an_empty_dict() -> None:
 
 
 async def is_admin(event: Any) -> bool:
-    return event.from_user is not None and event.from_user.id == 55
+    return event.from_user is not None and event.from_user.id == "10000055"
 
 
 async def no(event: Any) -> bool:
@@ -421,24 +430,47 @@ async def test_signed_wants_a_valid_signature(status: SignatureStatus | None, si
 
 
 async def test_user_by_id_or_handle() -> None:
-    assert await passes(f.user(55), message("x")) is not None
+    assert await passes(f.user(10000055), message("x")) is not None
+    assert await passes(f.user("10000055"), message("x")) is not None
+    # shaped like an id, so it is taken as one; with the @ it can only be the handle
+    assert await passes(f.user("@10000055"), message("x")) is None
     assert await passes(f.user("anna_r"), message("x")) is not None
     assert await passes(f.user("@ANNA_R"), press()) is not None
-    assert await passes(f.user(56, "bruno"), message("x")) is None
+    assert await passes(f.user(10000056, "bruno"), message("x")) is None
+
+
+async def test_a_handle_that_looks_like_an_id_does_not_pass_for_that_id() -> None:
+    # bruno took anna's id as his handle, and so did a group
+    bruno = {**ANNA, "id": "10000056", "username": "10000055"}
+    assert await passes(f.user("10000055"), message("x", **{"from": bruno})) is None
+    assert await passes(f.user("@10000055"), message("x", **{"from": bruno})) is not None
+    squat = ChatRef.from_json({**CHATS["group"], "username": "10000055"})
+    in_squat = dataclasses.replace(message("x", chat="group"), chat=squat)
+    assert await passes(f.chat("10000055"), in_squat) is None
+    assert await passes(f.chat("@10000055"), in_squat) is not None
+
+
+@pytest.mark.parametrize("empty", ["", "  ", "@"])
+async def test_an_empty_name_matches_nobody(empty: str) -> None:
+    nameless = {**ANNA, "username": None}
+    assert await passes(f.user(empty), message("x", **{"from": nameless})) is None
+    assert await passes(f.chat(empty), message("x", chat="channel")) is None
 
 
 async def test_user_needs_a_sender() -> None:
     post = message("x", chat="channel")
     post = dataclasses.replace(post, from_user=None)
-    assert await passes(f.user(55), post) is None
+    assert await passes(f.user("10000055"), post) is None
 
 
 async def test_chat_by_id_or_public_handle() -> None:
-    assert await passes(f.chat(300), message("x", chat="group")) is not None
+    assert await passes(f.chat("G10000300"), message("x", chat="group")) is not None
+    assert await passes(f.chat("g10000300"), message("x", chat="group")) is not None
+    assert await passes(f.chat("C10000300"), message("x", chat="group")) is None
     assert await passes(f.chat("@devroom"), message("x", chat="group")) is not None
     assert await passes(f.chat("devroom"), message("x", chat="private")) is None
-    assert await passes(f.chat(7), press()) is not None
-    assert await passes(f.chat(7), object()) is None
+    assert await passes(f.chat("10000055"), press()) is not None
+    assert await passes(f.chat("10000055"), object()) is None
 
 
 @pytest.mark.parametrize("factory", [f.user, f.chat])

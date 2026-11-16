@@ -67,7 +67,7 @@ hidesay-bot fingerprint bot-key.asc --spaced
 Asks the server who the token belongs to.
 
 ```text
-@weatherbot (id 412) - Weather
+@weatherbot (id B48213907) - Weather
 mode:     protected, key 3F1A 9C0D 52E7 B8A4 6C11 0D93 E2F4 7A55 9B10 C6D2
 status:   active, privacy mode on
 webhook:  none (polling)

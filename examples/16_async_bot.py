@@ -1,7 +1,7 @@
 """A bot inside your own asyncio program, next to other work.
 
     export HIDESAY_BOT_TOKEN="pgpbot_..."
-    export REPORT_CHAT=7781               # a chat the bot is in
+    export REPORT_CHAT=G48213907          # a chat the bot is in
     python examples/16_async_bot.py
 
 The bot polls while a second task posts a short report every few minutes. Ctrl+C
@@ -14,7 +14,7 @@ import time
 
 from hidesay_bot import Bot
 
-REPORT_CHAT = int(os.environ.get("REPORT_CHAT", "0"))
+REPORT_CHAT = os.environ.get("REPORT_CHAT", "")
 EVERY = float(os.environ.get("REPORT_EVERY", "300"))
 started = time.monotonic()
 handled = 0

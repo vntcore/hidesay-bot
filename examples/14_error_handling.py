@@ -1,7 +1,7 @@
 """Handling errors in one place, and the failed updates the bot keeps.
 
     export HIDESAY_BOT_TOKEN="pgpbot_..."
-    export ADMIN_ID=55                    # your own user id, for /failed and /retry
+    export ADMIN_ID=48213907              # your own user id, for /failed and /retry
     python examples/14_error_handling.py
 
 Send /divide 10 0 to make a handler fail. The update is kept in the failed list;
@@ -17,7 +17,7 @@ from hidesay_bot import filters as f
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("example")
 
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+ADMIN_ID = os.environ.get("ADMIN_ID", "")  # not set: nobody is admin
 bot = Bot()
 
 

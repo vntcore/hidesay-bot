@@ -55,14 +55,14 @@ from hidesay_bot import (
 from hidesay_bot.errors import PollingConflictError, PollingError
 
 from .conftest import FAST_RETRY, FIXTURES, fixture_text
-from .fakeapi import BASE, BOT_ID, MEDIA_ID, TOKEN, FakeAPI
+from .fakeapi import ANNA, BASE, BOT, BOT_ID, BRUNO, CHAT, GROUP, MEDIA_ID, TOKEN, FakeAPI, group, person
 
 PHONE_TEXT = "Ciao dal telefono: è già sera 🌙\nseconda riga"
 ATTACHMENT = b"\xff\xd8\xffJPEGDATA"
 GARBAGE_KEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nbm90IGEga2V5IGF0IGFsbA==\n-----END PGP PUBLIC KEY BLOCK-----\n"
 
 
-def key_row(user_id: int, fixture: str, fingerprint: str | None) -> dict[str, Any]:
+def key_row(user_id: str, fixture: str, fingerprint: str | None) -> dict[str, Any]:
     return {"userId": user_id, "fingerprint": fingerprint, "publicKey": fixture_text(fixture)}
 
 
@@ -143,12 +143,12 @@ def v6_key() -> BotKey:
 
 @pytest.fixture
 def anna_row(phone_key: PublicKey) -> dict[str, Any]:
-    return key_row(55, "phone_ed.pub.asc", phone_key.fingerprint)
+    return key_row(ANNA, "phone_ed.pub.asc", phone_key.fingerprint)
 
 
 @pytest.fixture
 def bruno_row(rsa_phone_key: PublicKey) -> dict[str, Any]:
-    return key_row(56, "phone_rsa.pub.asc", rsa_phone_key.fingerprint)
+    return key_row(BRUNO, "phone_rsa.pub.asc", rsa_phone_key.fingerprint)
 
 
 @pytest.fixture(scope="module")
@@ -170,8 +170,8 @@ def sign_only_key() -> PublicKey:
 @pytest.fixture
 def unusable_row(
     v6_key: BotKey, sign_only_key: PublicKey, rsa_phone_key: PublicKey
-) -> Callable[[str, int], dict[str, Any]]:
-    def make(kind: str, user_id: int) -> dict[str, Any]:
+) -> Callable[[str, str], dict[str, Any]]:
+    def make(kind: str, user_id: str) -> dict[str, Any]:
         if kind == "garbage":
             return {"userId": user_id, "fingerprint": None, "publicKey": GARBAGE_KEY}
         if kind == "v6":
@@ -203,7 +203,7 @@ async def test_private_and_group_handlers_only_see_their_own_chats(fake, new_bot
     fake.push_message(900, "hi all")
     await bot.process_update(last_update(fake))
 
-    assert seen == [("private", 7), ("group", 900)]
+    assert seen == [("private", CHAT), ("group", GROUP)]
 
 
 async def test_handler_can_exclude_a_chat_kind(fake, new_bot):
@@ -220,7 +220,7 @@ async def test_handler_can_exclude_a_chat_kind(fake, new_bot):
         fake.push_message(chat_id, "hello")
         await bot.process_update(last_update(fake))
 
-    assert seen == [900]
+    assert seen == [GROUP]
 
 
 @pytest.mark.parametrize("text", ["/start", "/start@testbot", "/START", "/Start@TestBot please"])
@@ -331,7 +331,7 @@ async def test_deleted_messages_reach_their_handler(fake, new_bot):
     await bot.process_update(last_update(fake))
 
     [deleted] = seen
-    assert deleted.chat.id == 7
+    assert deleted.chat.id == CHAT
     assert deleted.message_ids == (3001, 3002)
 
 
@@ -339,8 +339,8 @@ async def test_chat_member_update_reaches_its_handler_and_drops_what_was_cached_
     team = fake.add_chat(900, "group", title="Team", history_visible=True)
     fake.add_chat(901, "group", title="Other", history_visible=True)
     bot = new_bot()
-    await bot.get_chat(900)
-    await bot.get_chat(901)
+    await bot.get_chat(GROUP)
+    await bot.get_chat(group(901))
     changes = []
 
     @bot.on_chat_member()
@@ -353,21 +353,21 @@ async def test_chat_member_update_reaches_its_handler_and_drops_what_was_cached_
         date=1791000000000,
         old={"status": "member", "rights": 255},
         new={"status": "admin", "adminRights": 3, "can": {"deleteMessages": True}},
-        **{"from": {"id": 55, "username": "anna", "firstName": "Anna", "isBot": False}},
+        **{"from": {"id": ANNA, "username": "anna", "firstName": "Anna", "isBot": False}},
     )
     await bot.process_update(last_update(fake))
-    await bot.get_chat(900)
-    await bot.get_chat(901)
+    await bot.get_chat(GROUP)
+    await bot.get_chat(group(901))
 
     [change] = changes
     assert change.new.is_admin
     assert change.new.can.delete_messages
-    assert change.from_user.id == 55
+    assert change.from_user.id == ANNA
     assert not change.joined
     assert not change.left
     # our seat changed in 900: what the bot knew about it is stale, 901 is untouched
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == 2
-    assert len(fake.calls("GET", "/bot/v1/chats/901")) == 1
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == 2
+    assert len(fake.calls("GET", f"/bot/v1/chats/{group(901)}")) == 1
 
 
 async def test_on_update_handler_receives_the_update_itself(fake, new_bot):
@@ -491,12 +491,12 @@ async def test_reply_asks_a_group_for_its_mode_but_not_a_private_chat(fake, new_
         await bot.process_update(last_update(fake))
 
     assert [(p["chatId"], p["text"], p["replyTo"]) for p in posts(fake)] == [
-        (7, "echo hi", 4007),
-        (900, "echo hi", 4900),
+        (CHAT, "echo hi", 4007),
+        (GROUP, "echo hi", 4900),
     ]
     # a private chat follows /me. A group's body is a hint anyone in it can shape, so
     # the group is asked once rather than trusted on its word
-    assert [c["path"] for c in fake.calls("GET", r"/bot/v1/chats/\d+")] == ["/bot/v1/chats/900"]
+    assert [c["path"] for c in fake.calls("GET", r"/bot/v1/chats/[GC]?\d+")] == [f"/bot/v1/chats/{GROUP}"]
 
 
 async def test_update_of_a_kind_this_version_does_not_know_still_reaches_on_update(fake, new_bot):
@@ -532,16 +532,16 @@ async def test_message_can_answer_show_typing_and_delete_itself(fake, new_bot):
         results["deleted"] = await message.delete()
 
     fake.push_message(7, "hi", message_id=4007)
-    fake.messages[4007] = {"id": 4007, "chatId": 7, "body": "hi"}
+    fake.messages[4007] = {"id": 4007, "chatId": CHAT, "body": "hi"}
     await bot.process_update(last_update(fake))
 
     [post] = posts(fake)
     assert post["text"] == "without a quote"
     assert "replyTo" not in post
-    [typing] = fake.calls("POST", "/bot/v1/chats/7/typing")
+    [typing] = fake.calls("POST", f"/bot/v1/chats/{CHAT}/typing")
     assert typing["json"] == {"typing": True}
     [delete] = fake.calls("DELETE", "/bot/v1/messages/4007")
-    assert delete["query"] == {"chatId": "7"}
+    assert delete["query"] == {"chatId": CHAT}
     assert 4007 not in fake.messages
     assert results["typing"] is True
     assert results["deleted"] is True
@@ -566,28 +566,28 @@ async def test_chats_and_messages_can_be_passed_as_objects(fake, new_bot):
     assert await bot.delete_message(sent, sent) is True
 
     [post] = posts(fake)
-    assert (post["chatId"], post["replyTo"]) == (7, 4007)
-    assert len(fake.calls("POST", "/bot/v1/chats/7/typing")) == 1
+    assert (post["chatId"], post["replyTo"]) == (CHAT, 4007)
+    assert len(fake.calls("POST", f"/bot/v1/chats/{CHAT}/typing")) == 1
     assert sent.id not in fake.messages
 
 
 async def test_async_filters_are_awaited(fake, new_bot):
     fake.add_chat(7)
     bot = new_bot()
-    handled: list[int] = []
+    handled: list[str] = []
 
     async def from_anna(message):
-        return message.from_user.id == 55
+        return message.from_user.id == ANNA
 
     @bot.on_message(from_anna)
     async def greet(message):
         handled.append(message.from_user.id)
 
-    for sender in (66, 55):
+    for sender in (66, 55):  # short numbers, the fake makes them ids
         fake.push_message(7, "hello", from_id=sender)
         await bot.process_update(last_update(fake))
 
-    assert handled == [55]
+    assert handled == [ANNA]
 
 
 async def test_command_and_regex_filters_skip_messages_without_text(fake, new_bot):
@@ -723,7 +723,7 @@ async def test_callback_edit_keeps_buttons_by_default_and_removes_them_with_none
     fake.add_chat(7)
     bot = new_bot()
     keyboard = InlineKeyboard.build([Button.callback("Yes", "yes"), Button.callback("No", "no")])
-    question = await bot.send_message(7, "Pick one", markup=keyboard)
+    question = await bot.send_message(CHAT, "Pick one", markup=keyboard)
     edits: list[SentMessage] = []
 
     @bot.on_callback_query(data="yes")
@@ -735,8 +735,8 @@ async def test_callback_edit_keeps_buttons_by_default_and_removes_them_with_none
     await bot.process_update(last_update(fake))
 
     kept, removed = fake.calls("PATCH", f"/bot/v1/messages/{question.id}")
-    assert kept["json"] == {"chatId": 7, "text": "Thinking it over"}
-    assert removed["json"] == {"chatId": 7, "text": "You picked yes", "markup": None}
+    assert kept["json"] == {"chatId": CHAT, "text": "Thinking it over"}
+    assert removed["json"] == {"chatId": CHAT, "text": "You picked yes", "markup": None}
     assert [button.callback_data for button in edits[0].markup.buttons()] == ["yes", "no"]
     assert edits[1].markup is None
     assert fake.messages[question.id]["markup"] is None
@@ -754,7 +754,7 @@ async def test_callback_send_and_pattern_match(fake, new_bot):
     await bot.process_update(last_update(fake))
 
     [post] = posts(fake)
-    assert post["chatId"] == 7
+    assert post["chatId"] == CHAT
     assert post["text"] == "page 3"
     assert "replyTo" not in post
 
@@ -762,7 +762,7 @@ async def test_callback_send_and_pattern_match(fake, new_bot):
 async def test_callback_can_delete_the_message_under_the_button(fake, new_bot):
     fake.add_chat(7)
     bot = new_bot()
-    question = await bot.send_message(7, "Pick one", markup=InlineKeyboard.build([Button.callback("Yes", "yes")]))
+    question = await bot.send_message(CHAT, "Pick one", markup=InlineKeyboard.build([Button.callback("Yes", "yes")]))
 
     @bot.on_callback_query()
     async def remove(query):
@@ -772,7 +772,7 @@ async def test_callback_can_delete_the_message_under_the_button(fake, new_bot):
     await bot.process_update(last_update(fake))
 
     assert question.id not in fake.messages
-    assert fake.calls("DELETE", f"/bot/v1/messages/{question.id}")[0]["query"] == {"chatId": "7"}
+    assert fake.calls("DELETE", f"/bot/v1/messages/{question.id}")[0]["query"] == {"chatId": CHAT}
 
 
 @pytest.mark.parametrize(
@@ -833,7 +833,7 @@ async def test_middleware_that_does_not_call_on_stops_the_update(fake, new_bot):
 
     @bot.middleware
     async def only_anna(handler, event, data):
-        if event.from_user.id != 55:
+        if event.from_user.id != ANNA:
             return None
         return await handler(event, data)
 
@@ -850,7 +850,7 @@ async def test_middleware_that_does_not_call_on_stops_the_update(fake, new_bot):
     fake.push_message(7, "from anna", from_id=55)
     await bot.process_update(last_update(fake))
 
-    assert handled == [55]
+    assert handled == [ANNA]
 
 
 async def test_middleware_can_hand_data_to_the_handler(fake, new_bot):
@@ -1281,7 +1281,7 @@ def test_run_sets_up_logging_only_for_an_app_that_has_none(make_bot, monkeypatch
 async def test_bot_as_an_async_context_manager_starts_and_stops(fake, make_bot):
     async with make_bot() as bot:
         assert bot.me is not None
-        assert bot.me.id == BOT_ID
+        assert bot.me.id == BOT
         # while running the bot holds its storage
         assert not bot.storage.try_lock()
 
@@ -1293,10 +1293,10 @@ async def test_send_into_an_open_chat_is_plain_text(fake, new_bot):
     fake.add_chat(7)
     bot = new_bot()
 
-    sent = await bot.send_message(7, "hello", reply_to=1234, silent=True)
+    sent = await bot.send_message(CHAT, "hello", reply_to=1234, silent=True)
 
     [post] = posts(fake)
-    assert post["chatId"] == 7
+    assert post["chatId"] == CHAT
     assert post["text"] == "hello"
     assert "armored" not in post
     assert post["replyTo"] == 1234
@@ -1314,7 +1314,7 @@ async def test_send_into_a_protected_private_chat_is_sealed_and_signed_by_the_bo
     fake.add_chat(7, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
 
-    sent = await bot.send_message(7, "the forecast says rain")
+    sent = await bot.send_message(CHAT, "the forecast says rain")
 
     [post] = posts(fake)
     assert "text" not in post
@@ -1334,62 +1334,62 @@ async def test_send_into_a_protected_group_is_sealed_to_every_listed_key(
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row, bruno_row])
     bot = new_bot(pgp_private_key=bot_key)
 
-    await bot.send_message(900, "standup at nine")
+    await bot.send_message(GROUP, "standup at nine")
 
     armored = posts(fake)[0]["armored"]
     for reader in (phone_secret, rsa_secret, bot_key):
         assert reader.decrypt(armored).text == "standup at nine"
     with pytest.raises(NotARecipientError):
         stranger_key.decrypt(armored)
-    assert len(fake.calls("GET", "/bot/v1/chats/900/keys")) == 1
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}/keys")) == 1
 
 
 async def test_send_into_an_open_group_is_plain_text(fake, new_bot, bot_key):
     fake.add_chat(900, "group", title="Lobby", history_visible=True)
     bot = new_bot(pgp_private_key=bot_key)
 
-    sent = await bot.send_message(900, "welcome")
+    sent = await bot.send_message(GROUP, "welcome")
 
-    assert posts(fake) == [{"chatId": 900, "text": "welcome", "sendId": posts(fake)[0]["sendId"]}]
+    assert posts(fake) == [{"chatId": GROUP, "text": "welcome", "sendId": posts(fake)[0]["sendId"]}]
     assert sent.text == "welcome"
-    assert fake.calls("GET", "/bot/v1/chats/900/keys") == []
+    assert fake.calls("GET", f"/bot/v1/chats/{GROUP}/keys") == []
 
 
 async def test_unusable_member_keys_are_left_out_of_a_group_with_a_warning(
     fake, new_bot, bot_key, anna_row, unusable_row, phone_secret, caplog
 ):
     kinds = ["garbage", "v6", "mislabelled", "sign-only"]
-    keys = [anna_row, *(unusable_row(kind, 77 + i) for i, kind in enumerate(kinds))]
+    keys = [anna_row, *(unusable_row(kind, person(77 + i)) for i, kind in enumerate(kinds))]
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=keys)
     bot = new_bot(pgp_private_key=bot_key)
 
-    await bot.send_message(900, "still delivered")
+    await bot.send_message(GROUP, "still delivered")
 
     assert phone_secret.decrypt(posts(fake)[0]["armored"]).text == "still delivered"
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and r.name == "hidesay_bot.bot"]
-    for user_id in (77, 78, 79, 80):
-        assert any(f"leaving out user {user_id}" in w for w in warnings), warnings
+    for n in (77, 78, 79, 80):
+        assert any(f"leaving out user {person(n)}" in w for w in warnings), warnings
 
 
 @pytest.mark.parametrize("kind", ["garbage", "v6", "mislabelled", "sign-only"])
 async def test_unusable_key_in_a_private_chat_refuses_to_send(fake, new_bot, bot_key, unusable_row, kind):
     fake.me["mode"] = "protected"
-    fake.add_chat(7, keys=[unusable_row(kind, 55)])
+    fake.add_chat(7, keys=[unusable_row(kind, ANNA)])
     bot = new_bot(pgp_private_key=bot_key)
 
-    with pytest.raises(EncryptionError, match="user 55"):
-        await bot.send_message(7, "for your eyes only")
+    with pytest.raises(EncryptionError, match=f"user {ANNA}"):
+        await bot.send_message(CHAT, "for your eyes only")
     assert posts(fake) == []
 
 
 @pytest.mark.parametrize("own_key_listed", [False, True], ids=["no keys", "only the bot's own"])
 async def test_nobody_to_seal_to_refuses_to_send(fake, new_bot, bot_key, own_key_listed):
-    keys = [key_row(BOT_ID, "bot.pub.asc", bot_key.fingerprint)] if own_key_listed else []
+    keys = [key_row(BOT, "bot.pub.asc", bot_key.fingerprint)] if own_key_listed else []
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=keys)
     bot = new_bot(pgp_private_key=bot_key)
 
     with pytest.raises(EncryptionError, match="nobody"):
-        await bot.send_message(900, "hello?")
+        await bot.send_message(GROUP, "hello?")
     assert posts(fake) == []
 
 
@@ -1399,7 +1399,7 @@ async def test_private_chat_whose_user_has_no_key_refuses_to_send(fake, new_bot,
     bot = new_bot(pgp_private_key=bot_key)
 
     with pytest.raises(NoUserKeyError):
-        await bot.send_message(7, "hello")
+        await bot.send_message(CHAT, "hello")
     assert posts(fake) == []
 
 
@@ -1409,7 +1409,7 @@ async def test_protected_chat_without_a_bot_key_refuses_to_send(fake, new_bot, a
     bot = new_bot()
 
     with pytest.raises(EncryptionError, match="no private key"):
-        await bot.send_message(7, "hello")
+        await bot.send_message(CHAT, "hello")
     assert posts(fake) == []
 
 
@@ -1423,7 +1423,7 @@ async def test_open_chat_refuses_a_message_that_must_be_encrypted(fake, new_bot,
     bot = new_bot(pgp_private_key=bot_key, **options)
 
     with pytest.raises(EncryptionRequiredError):
-        await bot.send_message(7, "the vault code", **send_options)
+        await bot.send_message(CHAT, "the vault code", **send_options)
     assert posts(fake) == []
 
 
@@ -1433,7 +1433,7 @@ async def test_encrypt_false_in_a_protected_chat_is_refused(fake, new_bot, bot_k
     bot = new_bot(pgp_private_key=bot_key)
 
     with pytest.raises(ValidationError, match="encrypt=False"):
-        await bot.send_message(7, "in clear please", encrypt=False)
+        await bot.send_message(CHAT, "in clear please", encrypt=False)
     assert posts(fake) == []
 
 
@@ -1447,14 +1447,14 @@ async def test_chat_that_turned_protected_gets_a_sealed_resend_with_the_same_sen
         chat = fake.add_chat(7, "group", title="Team", history_visible=True, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
     await bot.get_me()
-    await bot.get_chat(7)
+    await bot.get_chat(chat.id)
     # meanwhile the chat became end-to-end encrypted
     if kind == "private":
         fake.me["mode"] = "protected"
     else:
         chat.history_visible = False
 
-    sent = await bot.send_message(7, "still there?")
+    sent = await bot.send_message(chat.id, "still there?")
 
     clear, sealed = posts(fake)
     assert clear["text"] == "still there?"
@@ -1468,16 +1468,16 @@ async def test_chat_that_turned_protected_gets_a_sealed_resend_with_the_same_sen
 async def test_chat_that_turned_readable_is_never_sent_in_clear_on_its_own(fake, new_bot, bot_key, anna_row):
     chat = fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
-    await bot.send_message(900, "sealed hello")
+    await bot.send_message(GROUP, "sealed hello")
     chat.history_visible = True
 
     with pytest.raises(WrongBodyKindError) as info:
-        await bot.send_message(900, "secret plan")
+        await bot.send_message(GROUP, "secret plan")
 
     assert info.value.expected == "text"
     assert [sorted(p) for p in posts(fake)] == [["armored", "chatId", "sendId"]] * 2
     # the refusal is remembered: the next send follows the new mode
-    sent = await bot.send_message(900, "hello in clear")
+    sent = await bot.send_message(GROUP, "hello in clear")
     assert sent.text == "hello in clear"
     assert posts(fake)[-1]["text"] == "hello in clear"
     assert all(p.get("text") != "secret plan" for p in posts(fake))
@@ -1488,14 +1488,14 @@ async def test_chat_that_turned_readable_before_its_keys_were_fetched_takes_text
 ):
     chat = fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
-    await bot.get_chat(900)
+    await bot.get_chat(GROUP)
     chat.history_visible = True
 
     with pytest.raises(BadRequestError):
-        await bot.send_message(900, "first try")
+        await bot.send_message(GROUP, "first try")
     assert posts(fake) == []
 
-    sent = await bot.send_message(900, "second try")
+    sent = await bot.send_message(GROUP, "second try")
     assert sent.text == "second try"
 
 
@@ -1505,13 +1505,13 @@ async def test_edit_in_a_chat_that_turned_protected_is_sealed_and_sent_again(
     fake.add_chat(7, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
     await bot.get_me()
-    draft = await bot.send_message(7, "draft")
+    draft = await bot.send_message(CHAT, "draft")
     fake.me["mode"] = "protected"
 
     final = await draft.edit("final words")
 
     clear, sealed = fake.calls("PATCH", f"/bot/v1/messages/{draft.id}")
-    assert clear["json"] == {"chatId": 7, "text": "final words"}
+    assert clear["json"] == {"chatId": CHAT, "text": "final words"}
     assert "text" not in sealed["json"]
     assert phone_secret.decrypt(sealed["json"]["armored"]).text == "final words"
     assert final.encrypted
@@ -1521,7 +1521,7 @@ async def test_edit_in_a_chat_that_turned_protected_is_sealed_and_sent_again(
 async def test_edit_in_a_chat_that_turned_readable_is_not_resent_in_clear(fake, new_bot, bot_key, anna_row):
     chat = fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
-    draft = await bot.send_message(900, "sealed draft")
+    draft = await bot.send_message(GROUP, "sealed draft")
     chat.history_visible = True
 
     with pytest.raises(WrongBodyKindError):
@@ -1536,15 +1536,15 @@ async def test_sent_message_can_be_edited_and_deleted(fake, new_bot):
     fake.add_chat(7)
     bot = new_bot()
     keyboard = InlineKeyboard.build([Button.callback("Undo", "undo")])
-    draft = await bot.send_message(7, "draft", markup=keyboard)
+    draft = await bot.send_message(CHAT, "draft", markup=keyboard)
 
     final = await draft.edit("final")
 
     plain = await final.edit(markup=None)
 
     first, second = fake.calls("PATCH", f"/bot/v1/messages/{draft.id}")
-    assert first["json"] == {"chatId": 7, "text": "final"}
-    assert second["json"] == {"chatId": 7, "markup": None}
+    assert first["json"] == {"chatId": CHAT, "text": "final"}
+    assert second["json"] == {"chatId": CHAT, "markup": None}
     assert final.text == "final"
     assert final.markup is not None
     assert plain.markup is None
@@ -1556,8 +1556,8 @@ async def test_seal_encrypts_for_the_chat_without_sending(fake, new_bot, bot_key
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
 
-    recipients = await bot.recipients(900)
-    armored = await bot.seal(900, "for later")
+    recipients = await bot.recipients(GROUP)
+    armored = await bot.seal(GROUP, "for later")
 
     assert [key.fingerprint for key in recipients] == [phone_key.fingerprint]
     assert phone_secret.decrypt(armored).text == "for later"
@@ -1569,10 +1569,10 @@ async def test_chat_mode_is_looked_up_once_within_cache_ttl(fake, new_bot, cache
     fake.add_chat(900, "group", title="Lobby", history_visible=True)
     bot = new_bot(cache_ttl=cache_ttl)
 
-    await bot.send_message(900, "one")
-    await bot.send_message(900, "two")
+    await bot.send_message(GROUP, "one")
+    await bot.send_message(GROUP, "two")
 
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == lookups
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == lookups
     assert len(posts(fake)) == 2
 
 
@@ -1580,22 +1580,22 @@ async def test_get_chat_is_cached_until_refreshed(fake, new_bot):
     fake.add_chat(900, "group", title="Lobby", history_visible=True)
     bot = new_bot()
 
-    first = await bot.get_chat(900)
-    again = await bot.get_chat(900)
-    fake.chats[900].title = "Renamed"
-    fresh = await bot.get_chat(900, refresh=True)
+    first = await bot.get_chat(GROUP)
+    again = await bot.get_chat(GROUP)
+    fake.chats[GROUP].title = "Renamed"
+    fresh = await bot.get_chat(GROUP, refresh=True)
 
     assert again is first
     assert (first.kind, first.mode, first.title) == (ChatKind.GROUP, ChatMode.OPEN, "Lobby")
     assert fresh.title == "Renamed"
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == 2
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == 2
 
 
 async def test_send_normalises_line_breaks(fake, new_bot):
     fake.add_chat(7)
     bot = new_bot()
 
-    await bot.send_message(7, "line one\r\nline two\rline three")
+    await bot.send_message(CHAT, "line one\r\nline two\rline three")
 
     assert posts(fake)[0]["text"] == "line one\nline two\nline three"
 
@@ -1607,9 +1607,9 @@ async def test_text_limit_comes_from_the_server(fake, new_bot):
     await bot.get_me()
 
     with pytest.raises(ValidationError, match="limit is 10"):
-        await bot.send_message(7, "x" * 11)
+        await bot.send_message(CHAT, "x" * 11)
     assert posts(fake) == []
-    await bot.send_message(7, "x" * 10)
+    await bot.send_message(CHAT, "x" * 10)
     assert posts(fake)[0]["text"] == "x" * 10
 
 
@@ -1677,14 +1677,14 @@ async def test_verification_off_does_not_fetch_keys(fake, new_bot, bot_key, anna
     [message] = received
     assert message.text == PHONE_TEXT
     assert message.verification.status == SignatureStatus.NOT_CHECKED
-    assert fake.calls("GET", "/bot/v1/chats/7/keys") == []
+    assert fake.calls("GET", f"/bot/v1/chats/{CHAT}/keys") == []
 
 
 @pytest.mark.parametrize("fault", [{"status": 503, "code": "unavailable"}, {"network": True}], ids=["5xx", "network"])
 async def test_keys_that_cannot_be_fetched_leave_the_signature_unchecked(fake, new_bot, bot_key, anna_row, fault):
     fake.me["mode"] = "protected"
     fake.add_chat(7, keys=[anna_row])
-    fake.fail("GET", r"/chats/7/keys$", times=10, **fault)
+    fake.fail("GET", rf"/chats/{CHAT}/keys$", times=10, **fault)
     bot = new_bot(pgp_private_key=bot_key)
     received: list[Message] = []
 
@@ -1706,14 +1706,14 @@ async def test_keys_that_cannot_be_fetched_leave_the_signature_unchecked(fake, n
     [
         (None, "anna", "a post that speaks as the channel carries no sender to check against"),
         (66, "anna", "the server lists no key for the sender in this chat"),
-        (55, "garbage", "the sender's key is unreadable"),
+        (ANNA, "garbage", "the sender's key is unreadable"),
     ],
     ids=["anonymous channel post", "sender without a listed key", "unreadable sender key"],
 )
 async def test_signature_is_left_unchecked_when_the_sender_has_no_usable_key(
     fake, new_bot, bot_key, anna_row, unusable_row, from_id, listed, detail
 ):
-    keys = [anna_row] if listed == "anna" else [unusable_row("garbage", 55)]
+    keys = [anna_row] if listed == "anna" else [unusable_row("garbage", ANNA)]
     fake.add_chat(300, "channel", title="News", history_visible=False, keys=keys)
     bot = new_bot(pgp_private_key=bot_key)
     received: list[Message] = []
@@ -1858,9 +1858,9 @@ async def test_first_sight_pins_the_senders_key(fake, new_bot, bot_key, anna_row
     fake.push_message(7, armored=fixture_text("msg_text_signed.asc"))
     await bot.process_update(last_update(fake))
 
-    assert bot.storage.get_pin(55) == phone_key.fingerprint
+    assert bot.storage.get_pin(ANNA) == phone_key.fingerprint
     assert received[0].verification.valid
-    await bot.send_message(7, "same key, no fuss")
+    await bot.send_message(CHAT, "same key, no fuss")
     assert len(posts(fake)) == 1
 
 
@@ -1871,23 +1871,23 @@ async def test_changed_key_stops_sends_until_it_is_trusted(
     chat = fake.add_chat(7, keys=[anna_row])
     # no caching, so the bot sees the new key on the very next send
     bot = new_bot(pgp_private_key=bot_key, pin_keys=True, cache_ttl=0)
-    await bot.send_message(7, "first")
-    chat.keys = [key_row(55, "phone_rsa.pub.asc", rsa_phone_key.fingerprint)]
+    await bot.send_message(CHAT, "first")
+    chat.keys = [key_row(ANNA, "phone_rsa.pub.asc", rsa_phone_key.fingerprint)]
 
     with pytest.raises(KeyChangedError) as info:
-        await bot.send_message(7, "second")
+        await bot.send_message(CHAT, "second")
 
     assert (info.value.user_id, info.value.pinned, info.value.current) == (
-        55,
+        ANNA,
         phone_key.fingerprint,
         rsa_phone_key.fingerprint,
     )
     assert len(posts(fake)) == 1
 
-    await bot.trust_key(55, rsa_phone_key.fingerprint)
-    await bot.send_message(7, "third")
+    await bot.trust_key(ANNA, rsa_phone_key.fingerprint)
+    await bot.send_message(CHAT, "third")
     assert rsa_secret.decrypt(posts(fake)[-1]["armored"]).text == "third"
-    assert bot.storage.get_pin(55) == rsa_phone_key.fingerprint
+    assert bot.storage.get_pin(ANNA) == rsa_phone_key.fingerprint
 
 
 async def test_changed_key_refuses_incoming_messages_until_trusted(
@@ -1897,7 +1897,7 @@ async def test_changed_key_refuses_incoming_messages_until_trusted(
     fake.add_chat(7, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key, pin_keys=True)
     # pinned back when anna had another phone
-    bot.storage.set_pin(55, rsa_phone_key.fingerprint)
+    bot.storage.set_pin(ANNA, rsa_phone_key.fingerprint)
     received: list[Message] = []
     refused: list[KeyChangedError] = []
 
@@ -1914,9 +1914,9 @@ async def test_changed_key_refuses_incoming_messages_until_trusted(
     # pinning refuses a changed key both ways: the handler never saw the message
     assert received == []
     [error] = refused
-    assert (error.user_id, error.pinned, error.current) == (55, rsa_phone_key.fingerprint, phone_key.fingerprint)
+    assert (error.user_id, error.pinned, error.current) == (ANNA, rsa_phone_key.fingerprint, phone_key.fingerprint)
 
-    await bot.trust_key(55, phone_key.fingerprint)
+    await bot.trust_key(ANNA, phone_key.fingerprint)
     fake.push_message(7, armored=fixture_text("msg_text_signed.asc"))
     await bot.process_update(last_update(fake))
 
@@ -1930,7 +1930,7 @@ async def test_publish_key_puts_the_public_key_and_seals_private_chats_from_then
 ):
     fake.add_chat(7, keys=[anna_row])
     bot = new_bot(pgp_private_key=bot_key)
-    await bot.get_chat(7)
+    await bot.get_chat(CHAT)
 
     result = await bot.publish_key()
 
@@ -1940,7 +1940,7 @@ async def test_publish_key_puts_the_public_key_and_seals_private_chats_from_then
     assert bot.me.protected
     assert bot.me.fingerprint == bot_key.fingerprint
     # the mode cached as open is gone: the very first post is sealed, no refused clear one
-    await bot.send_message(7, "sealed from now on")
+    await bot.send_message(CHAT, "sealed from now on")
     [post] = posts(fake)
     assert phone_secret.decrypt(post["armored"]).text == "sealed from now on"
 
@@ -1948,11 +1948,11 @@ async def test_publish_key_puts_the_public_key_and_seals_private_chats_from_then
 async def test_get_chat_reports_private_chats_protected_after_publish_key(fake, new_bot, bot_key):
     fake.add_chat(7)
     bot = new_bot(pgp_private_key=bot_key)
-    assert (await bot.get_chat(7)).mode == ChatMode.OPEN
+    assert (await bot.get_chat(CHAT)).mode == ChatMode.OPEN
 
     await bot.publish_key()
 
-    assert (await bot.get_chat(7)).mode == ChatMode.PROTECTED
+    assert (await bot.get_chat(CHAT)).mode == ChatMode.PROTECTED
 
 
 @pytest.mark.parametrize(("published", "puts"), [(None, 1), ("same", 0), ("old", 1)])
@@ -2086,7 +2086,7 @@ async def test_get_me_is_kept_until_refreshed(fake, new_bot):
     fresh = await bot.get_me(refresh=True)
 
     assert again is first
-    assert (first.id, first.username, first.name) == (BOT_ID, "testbot", "Test")
+    assert (first.id, first.username, first.name) == (BOT, "testbot", "Test")
     assert fresh.name == "Renamed"
     assert len(fake.calls("GET", "/bot/v1/me")) == 2
     assert bot.username == "testbot"
@@ -2118,21 +2118,21 @@ async def test_command_menus_can_be_managed_through_the_bot(fake, new_bot):
 
 
 async def test_chat_and_key_lookups_go_through_the_bot(fake, new_bot, anna_row, phone_key):
-    anna = {"id": 55, "username": "anna", "firstName": "Anna", "isBot": False}
+    anna = {"id": ANNA, "username": "anna", "firstName": "Anna", "isBot": False}
     members = [{"user": anna, "status": "admin", "adminRights": 1, "can": {"deleteMessages": True}}]
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row], members=members)
-    fake.user_keys[55] = anna_row
+    fake.user_keys[ANNA] = anna_row
     bot = new_bot()
 
     assert isinstance(bot.api, AsyncClient)
-    keys = await bot.get_chat_keys(900)
-    roster = await bot.get_chat_members(900)
-    member = await bot.get_chat_member(900, 55)
-    user_key = await bot.get_user_key(55)
+    keys = await bot.get_chat_keys(GROUP)
+    roster = await bot.get_chat_members(GROUP)
+    member = await bot.get_chat_member(GROUP, ANNA)
+    user_key = await bot.get_user_key(ANNA)
 
-    assert [k.user_id for k in keys.keys] == [55]
+    assert [k.user_id for k in keys.keys] == [ANNA]
     assert keys.member_count == 3
-    assert [m.user.id for m in roster.members] == [55]
+    assert [m.user.id for m in roster.members] == [ANNA]
     assert member.is_admin
     assert member.can.delete_messages
     assert user_key.fingerprint == phone_key.fingerprint
@@ -2151,14 +2151,14 @@ async def test_revoke_token_burns_it(fake, new_bot):
 async def test_leave_chat_forgets_what_the_bot_knew_about_it(fake, new_bot):
     fake.add_chat(900, "group", title="Team", history_visible=True)
     bot = new_bot()
-    await bot.get_chat(900)
+    await bot.get_chat(GROUP)
 
-    assert await bot.leave_chat(900) is True
+    assert await bot.leave_chat(GROUP) is True
 
     # nothing cached any more: the server is asked, and the bot is not in it
     with pytest.raises(ChatNotFoundError):
-        await bot.get_chat(900)
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == 2
+        await bot.get_chat(GROUP)
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == 2
 
 
 @pytest.mark.parametrize("source", ["env", "env file", "callable"])

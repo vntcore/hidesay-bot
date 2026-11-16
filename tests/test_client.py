@@ -66,16 +66,16 @@ from hidesay_bot.models import (
 from hidesay_bot.ratelimit import RateLimiter
 
 from .conftest import FAST_RETRY, FIXTURES, fixture_text
-from .fakeapi import BASE, BOT_ID, MEDIA_ID, TOKEN, FakeAPI
+from .fakeapi import BASE, BOT, BOT_ID, MEDIA_ID, TOKEN, FakeAPI, group, person
 
 Answer = Callable[[httpx2.Request], httpx2.Response]
 
 SECRET = TOKEN.split(".", 1)[1]
-HINT = "pgpbot_412.****AAAA"
+HINT = f"pgpbot_{BOT_ID}.****AAAA"
 
-PRIVATE = 7781
-GROUP = 9100
-ANNA = 55
+PRIVATE = person(7781)
+GROUP = group(9100)
+ANNA = person(55)
 MESSAGE = 1001
 CALLBACK = "4f1c9b2e7a3d4c8e9b0a1f"
 SEND_ID = "6f9619ff-8b86-4011-b42d-00c04fc964ff"
@@ -87,7 +87,7 @@ PUBLIC_KEY = fixture_text("bot.pub.asc")
 PRIVATE_KEY = fixture_text("bot.sec.asc")
 ARMORED = fixture_text("msg_text_signed.asc")
 ATTACHMENT = (FIXTURES / "attachment.pgp").read_bytes()
-ME = {"id": BOT_ID, "username": "testbot", "name": "Test"}
+ME = {"id": BOT, "username": "testbot", "name": "Test"}
 
 KEYBOARD = InlineKeyboard.build(
     [Button.callback("Hourly", "hourly:rome"), Button.link("Map", "https://maps.example/rome")]
@@ -613,7 +613,7 @@ async def test_get_me_reads_the_bot_its_webhook_and_the_limits(client: Either, f
     fake.webhook.update(url="https://bot.example/hook", secret="s3cret")
     me = await client.get_me()
     assert (me.id, me.username, me.name, me.mode, me.status) == (
-        BOT_ID,
+        BOT,
         "testbot",
         "Test",
         ChatMode.OPEN,
@@ -905,7 +905,7 @@ async def test_the_members_of_a_group_one_by_one_or_all_together(client: Either,
     )
     assert await client.get_chat_member(GROUP, ANNA) == anna
     with pytest.raises(MemberNotFoundError):
-        await client.get_chat_member(GROUP, 4242)
+        await client.get_chat_member(GROUP, person(4242))
 
 
 async def test_leave_chat_leaves_for_good(client: Either, world: FakeAPI) -> None:
@@ -926,7 +926,7 @@ async def test_get_user_key_hands_out_the_key_the_server_holds(client: Either, w
     key = await client.get_user_key(ANNA)
     assert (key.user_id, key.fingerprint, key.public_key) == (ANNA, FINGERPRINT.upper(), ANNA_KEY["publicKey"])
     with pytest.raises(UserNotFoundError):
-        await client.get_user_key(4242)
+        await client.get_user_key(person(4242))
 
 
 async def test_resolve_turns_a_handle_into_an_id(client: Either, world: FakeAPI) -> None:
@@ -986,7 +986,7 @@ INVALID = [
     pytest.param("set_commands", ([("start", "hi")], "everyone"), {}, "scope", id="set_commands-unknown-scope"),
     pytest.param("send_message", (0, "hi"), {}, "chat_id", id="send_message-chat-zero"),
     pytest.param("send_message", (True, "hi"), {}, "chat_id", id="send_message-chat-bool"),
-    pytest.param("send_message", (str(PRIVATE), "hi"), {}, "chat_id", id="send_message-chat-str"),
+    pytest.param("send_message", ("X" + PRIVATE, "hi"), {}, "chat_id", id="send_message-chat-unknown-letter"),
     pytest.param("send_message", (PRIVATE,), {}, "text", id="send_message-no-body"),
     pytest.param("send_message", (PRIVATE, "hi"), {"armored": ARMORED}, None, id="send_message-text-and-armored"),
     pytest.param("send_message", (PRIVATE, " \n\t "), {}, "text", id="send_message-blank"),
@@ -1021,7 +1021,15 @@ INVALID = [
     pytest.param("get_chat_member", (GROUP, 0), {}, "user_id", id="get_chat_member-user-zero"),
     pytest.param("leave_chat", (None,), {}, "chat_id", id="leave_chat-none"),
     pytest.param("send_typing", (0,), {}, "chat_id", id="send_typing-zero"),
-    pytest.param("get_user_key", (-ANNA,), {}, "user_id", id="get_user_key-negative"),
+    pytest.param("get_user_key", ("G10000055",), {}, "user_id", id="get_user_key-a-group-is-not-a-person"),
+    pytest.param("get_chat", ("1000007",), {}, "chat_id", id="get_chat-seven-digits"),
+    pytest.param("get_chat", ("G01234567",), {}, "chat_id", id="get_chat-below-the-pool"),
+    pytest.param("get_user_key", ("01234567",), {}, "user_id", id="get_user_key-below-the-pool"),
+    pytest.param("get_chat", ("B10000412",), {}, "chat_id", id="get_chat-a-bot-is-not-a-chat"),
+    pytest.param("get_chat", (7781,), {}, "chat_id", id="get_chat-an-old-counter-id"),
+    pytest.param(
+        "get_chat_member", (GROUP, "C10000055"), {}, "user_id", id="get_chat_member-a-channel-is-not-a-person"
+    ),
     pytest.param("resolve", ("ab",), {}, "username", id="resolve-too-short"),
     pytest.param("resolve", ("a" * 33,), {}, "username", id="resolve-too-long"),
     pytest.param("resolve", ("con-trattino",), {}, "username", id="resolve-not-a-handle"),
@@ -1137,13 +1145,13 @@ async def test_network_retries_back_off_as_the_policy_says(
     monkeypatch.setattr(_http, "random", SimpleNamespace(uniform=lambda low, high: high))
     client = connect(wire, retry=RetryPolicy(attempts=4, backoff_base=0.5, backoff_max=1.5))
     fake.fail("GET", "/me$", network=True, times=3)
-    assert (await client.get_me()).id == BOT_ID
+    assert (await client.get_me()).id == BOT
     assert slept == [0.5, 1.0, 1.5]
 
 
 async def test_server_errors_are_retried_until_one_goes_through(client: Either, fake: FakeAPI, wire: Tap) -> None:
     fake.fail("GET", "/me$", status=500, code="internal", times=2)
-    assert (await client.get_me()).id == BOT_ID
+    assert (await client.get_me()).id == BOT
     assert wire.answers == [500, 500, 200]
 
 
@@ -1278,7 +1286,7 @@ async def test_a_done_code_after_a_lost_answer_means_the_first_try_worked(
             CallbackAnsweredError,
             id="answer_callback",
         ),
-        pytest.param("leave_chat", (4242,), lambda fake: None, ChatNotFoundError, id="leave_chat"),
+        pytest.param("leave_chat", (group(4242),), lambda fake: None, ChatNotFoundError, id="leave_chat"),
         pytest.param(
             "revoke_token", (), lambda fake: setattr(fake, "revoked", True), AuthenticationError, id="revoke_token"
         ),
@@ -1348,7 +1356,7 @@ async def test_the_per_minute_limit_waits_what_the_header_says_not_the_body(
 ) -> None:
     # the per-minute limiter always writes 60 in the body; the header has the real time left
     transport = Scripted(refusal(429, "rate_limited", retryAfter=60, headers={"Retry-After": "2"}), ok(ME))
-    assert (await connect(transport).get_me()).id == BOT_ID
+    assert (await connect(transport).get_me()).id == BOT
     [wait] = slept
     assert 2.05 <= wait <= 2.25
 
@@ -1357,7 +1365,7 @@ async def test_a_rate_limit_that_names_no_time_waits_a_second(
     connect: Callable[..., Either], slept: list[float]
 ) -> None:
     transport = Scripted(refusal(429, "rate_limited"), ok(ME))
-    assert (await connect(transport).get_me()).id == BOT_ID
+    assert (await connect(transport).get_me()).id == BOT
     [wait] = slept
     assert 1.05 <= wait <= 1.25
 
@@ -1367,7 +1375,7 @@ async def test_a_retry_after_given_as_a_date_is_waited_out_until_then(
 ) -> None:
     then = format_datetime(datetime.now(UTC) + timedelta(seconds=3), usegmt=True)
     transport = Scripted(refusal(429, "flood_wait", headers={"Retry-After": then}), ok(ME))
-    assert (await connect(transport).get_me()).id == BOT_ID
+    assert (await connect(transport).get_me()).id == BOT
     [wait] = slept
     # an HTTP date has whole seconds only: up to one of the three may be gone already
     assert 1.5 <= wait <= 3.25
@@ -1492,7 +1500,7 @@ async def test_a_proxy_error_page_is_a_server_error_and_is_retried(connect: Call
 
 async def test_a_proxy_error_page_then_a_real_answer_goes_through(connect: Callable[..., Either]) -> None:
     transport = Scripted(page(502, PROXY_PAGE), ok(ME))
-    assert (await connect(transport).get_me()).id == BOT_ID
+    assert (await connect(transport).get_me()).id == BOT
     assert len(transport.requests) == 2
 
 
@@ -1551,7 +1559,7 @@ async def test_an_answer_exactly_at_the_size_cap_is_read(
     body = json.dumps({"ok": True, "result": ME}).encode()
     monkeypatch.setattr(client_module, "MAX_RESPONSE_BYTES", len(body))
     transport = Scripted(lambda request: httpx2.Response(200, content=body))
-    assert (await connect(transport).get_me()).id == BOT_ID
+    assert (await connect(transport).get_me()).id == BOT
 
 
 async def test_an_endless_answer_is_cut_off_while_it_streams(
@@ -1711,7 +1719,7 @@ async def test_repr_and_token_hint_show_the_bot_id_and_the_last_four_only(client
     assert client.token_hint == HINT
     for shown in (repr(client.inner), str(client.inner)):
         assert HINT in shown
-        assert "bot_id=412" in shown
+        assert f"bot_id={BOT_ID}" in shown
         assert SECRET not in shown
 
 
@@ -1776,7 +1784,7 @@ async def test_token_and_server_come_from_the_environment(
     monkeypatch.setenv("HIDESAY_API", f"{BASE}/bot/v1/")
     client = connect(wire, token=None, api_url=None)
     assert (client.bot_id, client.api_url, client.token_hint) == (BOT_ID, BASE, HINT)
-    assert (await client.get_me()).id == BOT_ID
+    assert (await client.get_me()).id == BOT
     assert fake.calls()[0]["headers"]["authorization"] == f"Bearer {TOKEN}"
 
 
@@ -1933,13 +1941,13 @@ def test_async_client_serves_one_short_lived_loop_after_another(fake: FakeAPI) -
     tap = Tap(fake)
     api = AsyncClient(TOKEN, api_url=BASE, transport=tap, rate_limiter=False)
 
-    async def once() -> int:
+    async def once() -> str:
         try:
             return (await api.get_me()).id
         finally:
             await api.aclose()
 
-    assert [asyncio.run(once()), asyncio.run(once())] == [BOT_ID, BOT_ID]
+    assert [asyncio.run(once()), asyncio.run(once())] == [BOT, BOT]
     assert (tap.closed, len(tap.requests)) == (2, 2)
 
 

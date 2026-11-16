@@ -1,7 +1,7 @@
 """Sending to many chats without tripping the server's limits.
 
     export HIDESAY_BOT_TOKEN="pgpbot_..."
-    export ADMIN_ID=55
+    export ADMIN_ID=48213907
     python examples/15_rate_limiting.py
 
 Everybody who writes /subscribe gets on the list; the admin's /broadcast <text>
@@ -16,10 +16,10 @@ import os
 from hidesay_bot import BlockedByUserError, Bot, RateLimitError, RetryPolicy, UserGoneError
 from hidesay_bot import filters as f
 
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+ADMIN_ID = os.environ.get("ADMIN_ID", "")  # not set: nobody is admin
 # wait out longer slow modes than the default 90 s, and more of them
 bot = Bot(retry=RetryPolicy(rate_limit_retries=8, max_rate_limit_wait=300))
-subscribers: set[int] = set()
+subscribers: set[str] = set()
 background: set[asyncio.Task[None]] = set()
 
 
@@ -35,7 +35,7 @@ async def unsubscribe(message):
     await message.reply("Unsubscribed.")
 
 
-async def send_to_everyone(text: str, report_to: int) -> None:
+async def send_to_everyone(text: str, report_to: str) -> None:
     sent = gone = 0
     for chat_id in list(subscribers):
         try:

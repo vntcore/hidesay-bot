@@ -14,7 +14,7 @@ from hidesay_bot import Bot, Button, CallbackExpiredError, InlineKeyboard
 
 bot = Bot()
 votes: dict[int, Counter[str]] = {}
-voted: dict[int, set[int]] = {}
+voted: dict[int, set[str]] = {}
 
 CHOICES = {"pizza": "Pizza", "pasta": "Pasta", "salad": "Salad"}
 

@@ -88,6 +88,7 @@ EXPECTED: dict[str, tuple[type[APIError], int, type[APIError]]] = {
     "callback_expired": (CallbackExpiredError, 410, CallbackExpiredError),
     "not_found": (EndpointNotFoundError, 404, NotFoundError),
     "internal": (ServerError, 500, ServerError),
+    "try_again": (ServerError, 503, ServerError),
 }
 
 

@@ -62,13 +62,13 @@ OpenPGP module works without either.
 Every operation is described once, in `_spec.py`, as data:
 
 ```python
-def delete_message(chat_id: int, message_id: int) -> Call[bool]:
+def delete_message(chat_id: str | int, message_id: int) -> Call[bool]:
     message_id = v.check_id(message_id, "message_id")
     return Call(
         "DELETE",
         f"/messages/{message_id}",
         lambda r: _flag(r, "deleted"),
-        params={"chatId": v.check_id(chat_id, "chat_id")},
+        params={"chatId": v.check_chat_id(chat_id)},
         # a repeat whose first try got lost: "not found" means the first one worked
         done_codes=frozenset({"message_not_found"}),
         done_value=True,

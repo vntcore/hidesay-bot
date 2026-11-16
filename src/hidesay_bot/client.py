@@ -727,7 +727,7 @@ class AsyncClient(_Base):
 
         Args:
             scope: ``None`` for every scope with its list. Or one scope: ``"default"``,
-                ``"private"``, ``"groups"``, ``"groupAdmins"``, or ``"chat:<id>"`` for one chat
+                ``"private"``, ``"groups"``, ``"groupAdmins"``, or ``"chat:<id>"`` (``"chat:G48213907"``) for one chat
                 the bot is in.
 
         Returns:
@@ -769,7 +769,7 @@ class AsyncClient(_Base):
             commands: Up to 100 commands. Each is a `Command`, a dict with ``"command"`` and
                 ``"description"``, or a ``(name, description)`` pair.
             scope: Which list: ``"default"``, ``"private"``, ``"groups"``, ``"groupAdmins"``
-                or ``"chat:<id>"``. ``None`` means ``"default"``.
+                or ``"chat:<id>"`` (``"chat:G48213907"``). ``None`` means ``"default"``.
 
         Returns:
             The scope and its commands, as the server saved them.
@@ -777,7 +777,7 @@ class AsyncClient(_Base):
         Raises:
             ValidationError: More than 100 commands, a command that breaks the rules above, or
                 an unknown ``scope``.
-            ChatNotFoundError: A ``"chat:<id>"`` scope names a chat the bot is not in.
+            ChatNotFoundError: A ``"chat:<id>"`` (``"chat:G48213907"``) scope names a chat the bot is not in.
 
         Example:
             A menu for everyone, and one for the admins of groups::
@@ -796,7 +796,7 @@ class AsyncClient(_Base):
 
         Args:
             scope: Which list: ``"default"``, ``"private"``, ``"groups"``, ``"groupAdmins"``
-                or ``"chat:<id>"``. ``None`` means ``"default"``.
+                or ``"chat:<id>"`` (``"chat:G48213907"``). ``None`` means ``"default"``.
 
         Returns:
             The scope, now with no commands.
@@ -810,7 +810,7 @@ class AsyncClient(_Base):
 
     async def send_message(
         self,
-        chat_id: int,
+        chat_id: str | int,
         text: str | None = None,
         *,
         armored: str | None = None,
@@ -829,7 +829,8 @@ class AsyncClient(_Base):
 
         Before sending, it checks what the server would refuse:
 
-        - the IDs are positive integers;
+        - the chat is an ID like ``"G48213907"``, ``"C48213907"`` or a person's
+          ``"48213907"``, and ``reply_to`` a positive integer;
         - ``text`` is not blank, has at most 4096 UTF-16 code units, and no control characters
           but newline and tab (carriage returns become newlines first);
         - ``armored`` holds ``-----BEGIN PGP MESSAGE-----`` and has at most 131072 characters;
@@ -904,7 +905,7 @@ class AsyncClient(_Base):
 
     async def edit_message(
         self,
-        chat_id: int,
+        chat_id: str | int,
         message_id: int,
         text: str | None = None,
         *,
@@ -958,7 +959,7 @@ class AsyncClient(_Base):
             _spec.edit_message(chat_id, message_id, text, armored=armored, markup=markup, chat_kind=chat_kind)
         )
 
-    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+    async def delete_message(self, chat_id: str | int, message_id: int) -> bool:
         """Deletes a message for everyone, for good.
 
         Calls ``DELETE /messages/{messageId}``, with ``chatId`` in the query. The bot can
@@ -1035,7 +1036,7 @@ class AsyncClient(_Base):
 
     # --- Chats ---
 
-    async def get_chat(self, chat_id: int) -> Chat:
+    async def get_chat(self, chat_id: str | int) -> Chat:
         """Fetches a chat the bot is in: its kind, its mode and, in a group, the bot's seat.
 
         Calls ``GET /chats/{chatId}``. ``mode`` tells which body to send: ``text`` in an
@@ -1061,7 +1062,7 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.get_chat(chat_id))
 
-    async def get_chat_keys(self, chat_id: int) -> ChatKeys:
+    async def get_chat_keys(self, chat_id: str | int) -> ChatKeys:
         """Fetches the public keys a message into an encrypted chat must be sealed to.
 
         Calls ``GET /chats/{chatId}/keys``. The answer holds the keys of the people in the
@@ -1094,7 +1095,7 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.get_chat_keys(chat_id))
 
-    async def get_chat_members(self, chat_id: int) -> ChatMembers:
+    async def get_chat_members(self, chat_id: str | int) -> ChatMembers:
         """Fetches the members of a group or channel, as a member in the bot's seat sees them.
 
         Calls ``GET /chats/{chatId}/members``. Where the member list is hidden, a bot that is
@@ -1122,7 +1123,7 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.get_chat_members(chat_id))
 
-    async def get_chat_member(self, chat_id: int, user_id: int) -> Member:
+    async def get_chat_member(self, chat_id: str | int, user_id: str | int) -> Member:
         """Fetches one member's seat in a group or channel.
 
         Calls ``GET /chats/{chatId}/members/{userId}``. Before sending, it checks that both IDs
@@ -1150,7 +1151,7 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.get_chat_member(chat_id, user_id))
 
-    async def leave_chat(self, chat_id: int) -> bool:
+    async def leave_chat(self, chat_id: str | int) -> bool:
         """Leaves a group or channel.
 
         Calls ``POST /chats/{chatId}/leave``. The chat is told, the way it would be about a
@@ -1172,7 +1173,7 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.leave_chat(chat_id))
 
-    async def send_typing(self, chat_id: int, typing: bool = True) -> bool:
+    async def send_typing(self, chat_id: str | int, typing: bool = True) -> bool:
         """Shows "typing..." in a chat for a few seconds, or clears it.
 
         Calls ``POST /chats/{chatId}/typing``. The indicator clears on its own after a few
@@ -1239,7 +1240,7 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.resolve(username))
 
-    async def get_user_key(self, user_id: int) -> UserKey:
+    async def get_user_key(self, user_id: str | int) -> UserKey:
         """Fetches one person's public key.
 
         Calls ``GET /users/{userId}/key``. It works only for someone the bot shares a chat
@@ -1261,7 +1262,7 @@ class AsyncClient(_Base):
         Example:
             Read the key, and show its fingerprint the way people compare it::
 
-                user_key = await api.get_user_key(55)
+                user_key = await api.get_user_key("48213907")
                 anna = PublicKey.from_user_key(user_key)
                 print(format_fingerprint(anna.fingerprint))
         """
@@ -1818,7 +1819,7 @@ class Client(_Base):
 
         Args:
             scope: ``None`` for every scope with its list. Or one scope: ``"default"``,
-                ``"private"``, ``"groups"``, ``"groupAdmins"``, or ``"chat:<id>"`` for one chat
+                ``"private"``, ``"groups"``, ``"groupAdmins"``, or ``"chat:<id>"`` (``"chat:G48213907"``) for one chat
                 the bot is in.
 
         Returns:
@@ -1860,7 +1861,7 @@ class Client(_Base):
             commands: Up to 100 commands. Each is a `Command`, a dict with ``"command"`` and
                 ``"description"``, or a ``(name, description)`` pair.
             scope: Which list: ``"default"``, ``"private"``, ``"groups"``, ``"groupAdmins"``
-                or ``"chat:<id>"``. ``None`` means ``"default"``.
+                or ``"chat:<id>"`` (``"chat:G48213907"``). ``None`` means ``"default"``.
 
         Returns:
             The scope and its commands, as the server saved them.
@@ -1868,7 +1869,7 @@ class Client(_Base):
         Raises:
             ValidationError: More than 100 commands, a command that breaks the rules above, or
                 an unknown ``scope``.
-            ChatNotFoundError: A ``"chat:<id>"`` scope names a chat the bot is not in.
+            ChatNotFoundError: A ``"chat:<id>"`` (``"chat:G48213907"``) scope names a chat the bot is not in.
 
         Example:
             A menu for everyone, and one for the admins of groups::
@@ -1887,7 +1888,7 @@ class Client(_Base):
 
         Args:
             scope: Which list: ``"default"``, ``"private"``, ``"groups"``, ``"groupAdmins"``
-                or ``"chat:<id>"``. ``None`` means ``"default"``.
+                or ``"chat:<id>"`` (``"chat:G48213907"``). ``None`` means ``"default"``.
 
         Returns:
             The scope, now with no commands.
@@ -1901,7 +1902,7 @@ class Client(_Base):
 
     def send_message(
         self,
-        chat_id: int,
+        chat_id: str | int,
         text: str | None = None,
         *,
         armored: str | None = None,
@@ -1920,7 +1921,8 @@ class Client(_Base):
 
         Before sending, it checks what the server would refuse:
 
-        - the IDs are positive integers;
+        - the chat is an ID like ``"G48213907"``, ``"C48213907"`` or a person's
+          ``"48213907"``, and ``reply_to`` a positive integer;
         - ``text`` is not blank, has at most 4096 UTF-16 code units, and no control characters
           but newline and tab (carriage returns become newlines first);
         - ``armored`` holds ``-----BEGIN PGP MESSAGE-----`` and has at most 131072 characters;
@@ -1996,7 +1998,7 @@ class Client(_Base):
 
     def edit_message(
         self,
-        chat_id: int,
+        chat_id: str | int,
         message_id: int,
         text: str | None = None,
         *,
@@ -2050,7 +2052,7 @@ class Client(_Base):
             _spec.edit_message(chat_id, message_id, text, armored=armored, markup=markup, chat_kind=chat_kind)
         )
 
-    def delete_message(self, chat_id: int, message_id: int) -> bool:
+    def delete_message(self, chat_id: str | int, message_id: int) -> bool:
         """Deletes a message for everyone, for good.
 
         Calls ``DELETE /messages/{messageId}``, with ``chatId`` in the query. The bot can
@@ -2127,7 +2129,7 @@ class Client(_Base):
 
     # --- Chats ---
 
-    def get_chat(self, chat_id: int) -> Chat:
+    def get_chat(self, chat_id: str | int) -> Chat:
         """Fetches a chat the bot is in: its kind, its mode and, in a group, the bot's seat.
 
         Calls ``GET /chats/{chatId}``. ``mode`` tells which body to send: ``text`` in an
@@ -2153,7 +2155,7 @@ class Client(_Base):
         """
         return self.execute(_spec.get_chat(chat_id))
 
-    def get_chat_keys(self, chat_id: int) -> ChatKeys:
+    def get_chat_keys(self, chat_id: str | int) -> ChatKeys:
         """Fetches the public keys a message into an encrypted chat must be sealed to.
 
         Calls ``GET /chats/{chatId}/keys``. The answer holds the keys of the people in the
@@ -2186,7 +2188,7 @@ class Client(_Base):
         """
         return self.execute(_spec.get_chat_keys(chat_id))
 
-    def get_chat_members(self, chat_id: int) -> ChatMembers:
+    def get_chat_members(self, chat_id: str | int) -> ChatMembers:
         """Fetches the members of a group or channel, as a member in the bot's seat sees them.
 
         Calls ``GET /chats/{chatId}/members``. Where the member list is hidden, a bot that is
@@ -2214,7 +2216,7 @@ class Client(_Base):
         """
         return self.execute(_spec.get_chat_members(chat_id))
 
-    def get_chat_member(self, chat_id: int, user_id: int) -> Member:
+    def get_chat_member(self, chat_id: str | int, user_id: str | int) -> Member:
         """Fetches one member's seat in a group or channel.
 
         Calls ``GET /chats/{chatId}/members/{userId}``. Before sending, it checks that both IDs
@@ -2242,7 +2244,7 @@ class Client(_Base):
         """
         return self.execute(_spec.get_chat_member(chat_id, user_id))
 
-    def leave_chat(self, chat_id: int) -> bool:
+    def leave_chat(self, chat_id: str | int) -> bool:
         """Leaves a group or channel.
 
         Calls ``POST /chats/{chatId}/leave``. The chat is told, the way it would be about a
@@ -2264,7 +2266,7 @@ class Client(_Base):
         """
         return self.execute(_spec.leave_chat(chat_id))
 
-    def send_typing(self, chat_id: int, typing: bool = True) -> bool:
+    def send_typing(self, chat_id: str | int, typing: bool = True) -> bool:
         """Shows "typing..." in a chat for a few seconds, or clears it.
 
         Calls ``POST /chats/{chatId}/typing``. The indicator clears on its own after a few
@@ -2331,7 +2333,7 @@ class Client(_Base):
         """
         return self.execute(_spec.resolve(username))
 
-    def get_user_key(self, user_id: int) -> UserKey:
+    def get_user_key(self, user_id: str | int) -> UserKey:
         """Fetches one person's public key.
 
         Calls ``GET /users/{userId}/key``. It works only for someone the bot shares a chat
@@ -2353,7 +2355,7 @@ class Client(_Base):
         Example:
             Read the key, and show its fingerprint the way people compare it::
 
-                user_key = api.get_user_key(55)
+                user_key = api.get_user_key("48213907")
                 anna = PublicKey.from_user_key(user_key)
                 print(format_fingerprint(anna.fingerprint))
         """

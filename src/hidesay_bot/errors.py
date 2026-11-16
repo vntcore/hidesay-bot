@@ -508,8 +508,9 @@ class SlowModeError(RateLimitError):
 class ServerError(APIError):
     """5xx: the server failed.
 
-    It has the code ``internal``, or comes from any other ``5xx`` answer, with or without the
-    API's envelope. The client already tried again for the calls that are safe to repeat
+    It has the code ``internal``, or ``try_again`` when the server could not look a webhook's
+    host up just then, or comes from any other ``5xx`` answer, with or without the API's
+    envelope. The client already tried again for the calls that are safe to repeat
     (`RetryPolicy.attempts` tries in all), and a polling bot keeps trying on its own. Worth
     retrying later.
     """
@@ -562,6 +563,7 @@ _BY_CODE: dict[str, type[APIError]] = {
     "flood_wait": FloodWaitError,
     "slow_mode": SlowModeError,
     "internal": ServerError,
+    "try_again": ServerError,
 }
 
 _BY_STATUS: dict[int, type[APIError]] = {
@@ -823,7 +825,7 @@ class KeyChangedError(CryptoError):
     fails the same way.
 
     Attributes:
-        user_id (int): The person whose key changed.
+        user_id (str): The person whose key changed.
         pinned (str): The fingerprint the bot remembered, in hex, upper case.
         current (str): The fingerprint the server gives now, in hex, upper case.
 
@@ -838,7 +840,7 @@ class KeyChangedError(CryptoError):
                 raise error
     """
 
-    def __init__(self, message: str, *, user_id: int, pinned: str, current: str) -> None:
+    def __init__(self, message: str, *, user_id: str, pinned: str, current: str) -> None:
         """Creates the error.
 
         Args:

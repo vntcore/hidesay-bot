@@ -1,6 +1,6 @@
 # API coverage
 
-Bot API 1.0.0 has 22 operations and one outgoing webhook, and every one of them has a method
+Bot API 2.0.0 has 22 operations and one outgoing webhook, and every one of them has a method
 here, on both clients and both bots. The table says which, and where the SDK's own rules differ
 from the document.
 

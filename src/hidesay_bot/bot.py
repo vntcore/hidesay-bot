@@ -105,7 +105,7 @@ __all__ = ["Bot", "SyncBot"]
 log = logging.getLogger("hidesay_bot.bot")
 
 T = TypeVar("T")
-ChatLike = int | ChatRef
+ChatLike = str | int | ChatRef
 VerifyMode = Literal["auto", "require", "off"]
 
 _CACHE_MAX = 10_000
@@ -116,12 +116,12 @@ _OPEN_TRUST = 10.0
 _MESSAGE_PLAINTEXT_MAX = 1 << 20
 
 
-def _chat_id(chat: Any) -> int:
+def _chat_id(chat: Any) -> str:
     if isinstance(chat, ChatRef):
         return chat.id
     if isinstance(chat, (MessageBase, CallbackQueryBase, SentMessageBase)):
         return chat.chat.id
-    return v.check_id(chat, "chat_id")
+    return v.check_chat_id(chat)
 
 
 def _message_id(message: Any) -> int:
@@ -398,8 +398,8 @@ class _BotBase(Router):
         self._chats = _TTLCache(cache_ttl)
         self._modes = _TTLCache(cache_ttl)
         self._keys = _TTLCache(cache_ttl)
-        self._parsed_keys: OrderedDict[tuple[int, str], PublicKey] = OrderedDict()
-        self._kinds: OrderedDict[int, ChatKind] = OrderedDict()
+        self._parsed_keys: OrderedDict[tuple[str, str], PublicKey] = OrderedDict()
+        self._kinds: OrderedDict[str, ChatKind] = OrderedDict()
         self._answered: OrderedDict[str, None] = OrderedDict()
         self._lock = threading.Lock()
 
@@ -465,11 +465,11 @@ class _BotBase(Router):
             while len(self._kinds) > _CACHE_MAX:
                 self._kinds.popitem(last=False)
 
-    def _known_kind(self, chat_id: int) -> ChatKind | None:
+    def _known_kind(self, chat_id: str) -> ChatKind | None:
         with self._lock:
             return self._kinds.get(chat_id)
 
-    def _mode_without_asking(self, chat_id: int) -> tuple[ChatMode, ChatKind] | None:
+    def _mode_without_asking(self, chat_id: str) -> tuple[ChatMode, ChatKind] | None:
         if self._known_kind(chat_id) == ChatKind.PRIVATE:
             # a private chat is protected exactly when the bot has a published key, which
             # can change under a running bot (the console, the command line, another worker)
@@ -491,7 +491,7 @@ class _BotBase(Router):
         self._modes.put(chat.id, (chat.mode, chat.kind))
         self._remember_kind(chat)
 
-    def _forget_chat(self, chat_id: int) -> None:
+    def _forget_chat(self, chat_id: str) -> None:
         self._chats.drop(chat_id)
         self._modes.drop(chat_id)
         self._keys.drop(chat_id)
@@ -519,7 +519,7 @@ class _BotBase(Router):
             # our seat changed: rights, membership, maybe the roster we may see
             self._forget_chat(chat.id)
 
-    def _body_kind(self, mode: ChatMode, chat_id: int, encrypt: bool | None) -> Literal["text", "armored"]:
+    def _body_kind(self, mode: ChatMode, chat_id: str, encrypt: bool | None) -> Literal["text", "armored"]:
         if mode == ChatMode.PROTECTED:
             if encrypt is False:
                 raise ValidationError(
@@ -532,7 +532,7 @@ class _BotBase(Router):
             )
         return "text"
 
-    def _need_key(self, chat_id: int) -> BotKey:
+    def _need_key(self, chat_id: str) -> BotKey:
         if self.key is None:
             raise EncryptionError(
                 f"chat {chat_id} is end-to-end encrypted and the bot has no private key: "
@@ -553,7 +553,7 @@ class _BotBase(Router):
                 self._parsed_keys.popitem(last=False)
         return key
 
-    def _check_pin(self, user_id: int, fingerprint: str) -> None:
+    def _check_pin(self, user_id: str, fingerprint: str) -> None:
         if not self.pin_keys:
             return
         pinned = self.storage.get_pin(user_id)
@@ -569,7 +569,14 @@ class _BotBase(Router):
                 current=fingerprint,
             )
 
-    def _recipients_from(self, chat_id: int, keys: ChatKeys, private: bool) -> list[PublicKey]:
+    def _is_me(self, user_id: str) -> bool:
+        # /me says the bot's id with its B. The token only carries a number, and one made
+        # before the ids changed in November 2026 still carries the old one
+        if self.me is not None:
+            return user_id == self.me.id
+        return user_id == f"B{self.bot_id}"
+
+    def _recipients_from(self, chat_id: str, keys: ChatKeys, private: bool) -> list[PublicKey]:
         """Turns ``GET /chats/{id}/keys`` into keys to seal to.
 
         Refuses rather than seal to fewer people than it should in a private chat; in a group a
@@ -577,7 +584,7 @@ class _BotBase(Router):
         """
         out: list[PublicKey] = []
         for user_key in keys.keys:
-            if user_key.user_id == self.bot_id:
+            if self._is_me(user_key.user_id):
                 continue
             try:
                 key = self._public_key_of(user_key)
@@ -717,7 +724,7 @@ class _BotBase(Router):
 
     # --- shared async machinery: both bots run their engine on asyncio ---
 
-    async def _fetch_chat_keys(self, chat_id: int) -> ChatKeys:
+    async def _fetch_chat_keys(self, chat_id: str) -> ChatKeys:
         cached = self._keys.get(chat_id)
         if cached is not None:
             return cached  # type: ignore[no-any-return]
@@ -754,7 +761,7 @@ class _BotBase(Router):
             result = replace(result, verification=Verification(SignatureStatus.NOT_CHECKED, detail=reason))
         return self._apply_decryption(message, result)
 
-    async def _amode(self, chat_id: int) -> tuple[ChatMode, ChatKind]:
+    async def _amode(self, chat_id: str) -> tuple[ChatMode, ChatKind]:
         known = self._mode_without_asking(chat_id)
         if known is not None:
             return known
@@ -1523,8 +1530,8 @@ class Bot(_BotBase):
                     "kind": "message",
                     "message": {
                         "id": 10,
-                        "chat": {"id": 55, "kind": "private"},
-                        "from": {"id": 55, "username": "anna"},
+                        "chat": {"id": "48213907", "kind": "private"},
+                        "from": {"id": "48213907", "username": "anna"},
                         "date": 1791462000000,
                         "kind": "user",
                         "text": "/start",
@@ -1635,15 +1642,15 @@ class Bot(_BotBase):
         self._note_chat(info)
         return info
 
-    async def _mode(self, chat_id: int) -> tuple[ChatMode, ChatKind]:
+    async def _mode(self, chat_id: str) -> tuple[ChatMode, ChatKind]:
         return await self._amode(chat_id)
 
-    async def _body(self, mode: ChatMode, chat_id: int, text: str, encrypt: bool | None) -> dict[str, str]:
+    async def _body(self, mode: ChatMode, chat_id: str, text: str, encrypt: bool | None) -> dict[str, str]:
         if self._body_kind(mode, chat_id, encrypt) == "armored":
             return {"armored": await self.seal(chat_id, text)}
         return {"text": text}
 
-    async def _mode_changed(self, chat_id: int, kind: ChatKind) -> None:
+    async def _mode_changed(self, chat_id: str, kind: ChatKind) -> None:
         self._forget_chat(chat_id)
         if kind == ChatKind.PRIVATE:
             with contextlib.suppress(APIError, NetworkError):
@@ -2018,13 +2025,13 @@ class Bot(_BotBase):
         """
         return await self._aapi.get_chat_members(_chat_id(chat))
 
-    async def get_chat_member(self, chat: ChatLike, user_id: int) -> Member:
+    async def get_chat_member(self, chat: ChatLike, user_id: str | int) -> Member:
         """Reads one member's seat in a group or channel.
 
         Args:
             chat: The group or channel: its ID, or a chat object such as a `Chat`, a `ChatRef`
                 or ``message.chat``.
-            user_id: The person's user ID.
+            user_id: The person's ID: ``"48213907"``, or a bot's ``"B48213907"``.
 
         Returns:
             The `Member`, with the person, their status and their admin rights.
@@ -2092,14 +2099,15 @@ class Bot(_BotBase):
         """
         return await self._aapi.resolve(username)
 
-    async def get_user_key(self, user_id: int) -> UserKey:
+    async def get_user_key(self, user_id: str | int) -> UserKey:
         """Reads one person's public key (``GET /users/{id}/key``).
 
         The key is not checked here: `PublicKey.from_user_key` reads it and checks its
         fingerprint.
 
         Args:
-            user_id: The person's user ID. The bot must share a chat with them.
+            user_id: The person's ID (``"48213907"``, or a bot's ``"B48213907"``). The bot must
+                share a chat with them.
 
         Returns:
             The `UserKey`, with the user ID, the fingerprint and the armored public key.
@@ -2115,7 +2123,7 @@ class Bot(_BotBase):
 
         Args:
             scope: ``None`` for every scope, or one of ``"default"``, ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` and ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` and ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             With no ``scope``, a list of `CommandScope`, one per scope with its commands. With
@@ -2139,19 +2147,19 @@ class Bot(_BotBase):
                 capitals are made lowercase); a description has 1 to 256 characters. When a
                 name comes twice, the first one is kept.
             scope: Which menu: ``"default"`` (also when ``None``), ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             The `CommandScope` as the server saved it.
 
         Raises:
-            ChatNotFoundError: A ``chat:<id>`` scope names a chat the bot is not in.
+            ChatNotFoundError: A ``chat:G…`` or ``chat:C…`` scope names a chat the bot is not in.
 
         Example:
             A menu for every chat, and one for a single group::
 
                 await bot.set_commands([("start", "Say hello"), ("help", "What I can do")])
-                await bot.set_commands([("rules", "Show the rules")], scope="chat:7781")
+                await bot.set_commands([("rules", "Show the rules")], scope="chat:G48213907")
         """
         return await self._aapi.set_commands(commands, scope)
 
@@ -2163,7 +2171,7 @@ class Bot(_BotBase):
 
         Args:
             scope: Which menu: ``"default"`` (also when ``None``), ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             The `CommandScope`, now with no commands.
@@ -2180,7 +2188,7 @@ class Bot(_BotBase):
 
         Args:
             scope: Which menu: ``"default"`` (also when ``None``), ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             The `CommandScope` as the server saved it.
@@ -2372,7 +2380,7 @@ class Bot(_BotBase):
             return result.data  # type: ignore[no-any-return]
         return data
 
-    async def trust_key(self, user_id: int, fingerprint: str) -> None:
+    async def trust_key(self, user_id: str | int, fingerprint: str) -> None:
         """Accepts ``fingerprint`` as the key of ``user_id`` from now on.
 
         With ``pin_keys=True`` the bot refuses a person's key when it is not the one pinned for
@@ -2382,7 +2390,7 @@ class Bot(_BotBase):
         `retry_failed` runs them again. The pin is saved in the storage.
 
         Args:
-            user_id: The person's user ID.
+            user_id: The person's ID: ``"48213907"``, or a bot's ``"B48213907"``.
             fingerprint: The fingerprint you checked: 40 (v4) or 64 (v6) hex digits, without
                 spaces.
 
@@ -2398,7 +2406,7 @@ class Bot(_BotBase):
             The bot opens a `SQLiteStorage` when it starts and closes it when it stops: with
             one, call this while the bot runs (from a handler, from a hook, or after `start`).
         """
-        await asyncio.to_thread(self.storage.set_pin, user_id, v.check_fingerprint(fingerprint))
+        await asyncio.to_thread(self.storage.set_pin, v.check_user_id(user_id), v.check_fingerprint(fingerprint))
         self._keys.drop()
 
     async def failed_updates(self, limit: int = 100) -> list[FailedUpdate]:
@@ -2699,8 +2707,8 @@ class SyncBot(_BotBase):
                     "kind": "message",
                     "message": {
                         "id": 10,
-                        "chat": {"id": 55, "kind": "private"},
-                        "from": {"id": 55, "username": "anna"},
+                        "chat": {"id": "48213907", "kind": "private"},
+                        "from": {"id": "48213907", "username": "anna"},
                         "date": 1791462000000,
                         "kind": "user",
                         "text": "/start",
@@ -2770,7 +2778,7 @@ class SyncBot(_BotBase):
 
     # --- the API, with OpenPGP done for you ---
 
-    def _fetch_keys_blocking(self, chat_id: int) -> ChatKeys:
+    def _fetch_keys_blocking(self, chat_id: str) -> ChatKeys:
         cached = self._keys.get(chat_id)
         if cached is not None:
             return cached  # type: ignore[no-any-return]
@@ -2821,7 +2829,7 @@ class SyncBot(_BotBase):
         self._note_chat(info)
         return info
 
-    def _mode(self, chat_id: int) -> tuple[ChatMode, ChatKind]:
+    def _mode(self, chat_id: str) -> tuple[ChatMode, ChatKind]:
         if self.me is None:
             self.me = self._api.get_me()
         known = self._mode_without_asking(chat_id)
@@ -2833,12 +2841,12 @@ class SyncBot(_BotBase):
         info = self.get_chat(chat_id, refresh=True)
         return info.mode, info.kind
 
-    def _body(self, mode: ChatMode, chat_id: int, text: str, encrypt: bool | None) -> dict[str, str]:
+    def _body(self, mode: ChatMode, chat_id: str, text: str, encrypt: bool | None) -> dict[str, str]:
         if self._body_kind(mode, chat_id, encrypt) == "armored":
             return {"armored": self.seal(chat_id, text)}
         return {"text": text}
 
-    def _mode_changed(self, chat_id: int, kind: ChatKind) -> None:
+    def _mode_changed(self, chat_id: str, kind: ChatKind) -> None:
         self._forget_chat(chat_id)
         if kind == ChatKind.PRIVATE:
             with contextlib.suppress(APIError, NetworkError):
@@ -3209,13 +3217,13 @@ class SyncBot(_BotBase):
         """
         return self._api.get_chat_members(_chat_id(chat))
 
-    def get_chat_member(self, chat: ChatLike, user_id: int) -> Member:
+    def get_chat_member(self, chat: ChatLike, user_id: str | int) -> Member:
         """Reads one member's seat in a group or channel.
 
         Args:
             chat: The group or channel: its ID, or a chat object such as a `Chat`, a `ChatRef`
                 or ``message.chat``.
-            user_id: The person's user ID.
+            user_id: The person's ID: ``"48213907"``, or a bot's ``"B48213907"``.
 
         Returns:
             The `Member`, with the person, their status and their admin rights.
@@ -3283,14 +3291,15 @@ class SyncBot(_BotBase):
         """
         return self._api.resolve(username)
 
-    def get_user_key(self, user_id: int) -> UserKey:
+    def get_user_key(self, user_id: str | int) -> UserKey:
         """Reads one person's public key (``GET /users/{id}/key``).
 
         The key is not checked here: `PublicKey.from_user_key` reads it and checks its
         fingerprint.
 
         Args:
-            user_id: The person's user ID. The bot must share a chat with them.
+            user_id: The person's ID (``"48213907"``, or a bot's ``"B48213907"``). The bot must
+                share a chat with them.
 
         Returns:
             The `UserKey`, with the user ID, the fingerprint and the armored public key.
@@ -3306,7 +3315,7 @@ class SyncBot(_BotBase):
 
         Args:
             scope: ``None`` for every scope, or one of ``"default"``, ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` and ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` and ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             With no ``scope``, a list of `CommandScope`, one per scope with its commands. With
@@ -3330,19 +3339,19 @@ class SyncBot(_BotBase):
                 capitals are made lowercase); a description has 1 to 256 characters. When a
                 name comes twice, the first one is kept.
             scope: Which menu: ``"default"`` (also when ``None``), ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             The `CommandScope` as the server saved it.
 
         Raises:
-            ChatNotFoundError: A ``chat:<id>`` scope names a chat the bot is not in.
+            ChatNotFoundError: A ``chat:G…`` or ``chat:C…`` scope names a chat the bot is not in.
 
         Example:
             A menu for every chat, and one for a single group::
 
                 bot.set_commands([("start", "Say hello"), ("help", "What I can do")])
-                bot.set_commands([("rules", "Show the rules")], scope="chat:7781")
+                bot.set_commands([("rules", "Show the rules")], scope="chat:G48213907")
         """
         return self._api.set_commands(commands, scope)
 
@@ -3354,7 +3363,7 @@ class SyncBot(_BotBase):
 
         Args:
             scope: Which menu: ``"default"`` (also when ``None``), ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             The `CommandScope`, now with no commands.
@@ -3371,7 +3380,7 @@ class SyncBot(_BotBase):
 
         Args:
             scope: Which menu: ``"default"`` (also when ``None``), ``"private"``,
-                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"``.
+                ``"groups"``, ``"groupAdmins"`` or ``"chat:<id>"`` (``"chat:G48213907"``).
 
         Returns:
             The `CommandScope` as the server saved it.
@@ -3570,7 +3579,7 @@ class SyncBot(_BotBase):
             return opened.data  # type: ignore[no-any-return]
         return data
 
-    def trust_key(self, user_id: int, fingerprint: str) -> None:
+    def trust_key(self, user_id: str | int, fingerprint: str) -> None:
         """Accepts ``fingerprint`` as the key of ``user_id`` from now on.
 
         With ``pin_keys=True`` the bot refuses a person's key when it is not the one pinned for
@@ -3580,7 +3589,7 @@ class SyncBot(_BotBase):
         `retry_failed` runs them again. The pin is saved in the storage.
 
         Args:
-            user_id: The person's user ID.
+            user_id: The person's ID: ``"48213907"``, or a bot's ``"B48213907"``.
             fingerprint: The fingerprint you checked: 40 (v4) or 64 (v6) hex digits, without
                 spaces.
 
@@ -3597,7 +3606,7 @@ class SyncBot(_BotBase):
             one, call this while `run` runs (from a handler, from a hook, or from another
             thread).
         """
-        self.storage.set_pin(user_id, v.check_fingerprint(fingerprint))
+        self.storage.set_pin(v.check_user_id(user_id), v.check_fingerprint(fingerprint))
         self._keys.drop()
 
     def failed_updates(self, limit: int = 100) -> list[FailedUpdate]:

@@ -32,7 +32,7 @@ from hidesay_bot.storage import MemoryStorage
 from hidesay_bot.webhook import SECRET_HEADER
 
 from .conftest import FIXTURES, fixture_text
-from .fakeapi import BOT_ID, MEDIA_ID, FakeAPI
+from .fakeapi import ANNA, BOT_ID, CHAT, GROUP, MEDIA_ID, FakeAPI, group
 
 SECRET = "pgp_webhook-Secret_0123456789"
 
@@ -55,7 +55,7 @@ async def eventually(probe: Callable[[], Any], within: float = 5.0) -> None:
 
 
 def anna(phone_key: PublicKey) -> dict[str, Any]:
-    return {"userId": 55, "fingerprint": phone_key.fingerprint, "publicKey": fixture_text("phone_ed.pub.asc")}
+    return {"userId": ANNA, "fingerprint": phone_key.fingerprint, "publicKey": fixture_text("phone_ed.pub.asc")}
 
 
 # --- hooks ---
@@ -69,12 +69,12 @@ async def test_startup_and_shutdown_hooks_run_with_the_bot_connected(fake: FakeA
     @bot.on_startup
     async def started(b: Bot) -> None:
         seen.append(("start", b.username))
-        await b.send_message(7, "up")
+        await b.send_message(CHAT, "up")
 
     @bot.on_shutdown
     async def stopping(b: Bot) -> None:
         seen.append(("stop", b.username))
-        await b.send_message(7, "going down")
+        await b.send_message(CHAT, "going down")
 
     task = asyncio.create_task(bot.start_polling(poll_timeout=1))
     await eventually(lambda: seen)
@@ -320,22 +320,22 @@ async def test_a_group_body_that_contradicts_the_cache_makes_the_bot_ask_again(
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna(phone_key)])
     bot = make_bot(pgp_private_key=bot_key)
     try:
-        await bot.send_message(900, "sealed")
+        await bot.send_message(GROUP, "sealed")
         fake.push_message(900, "plain words")
         await bot.process_update(fake.queue[-1])
-        await bot.send_message(900, "again")
+        await bot.send_message(GROUP, "again")
     finally:
         await bot.stop()
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == 2
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == 2
 
 
 def test_an_open_mode_is_trusted_for_a_short_while_only() -> None:
     cache = _TTLCache(60.0)
-    cache.put(900, "open")
-    assert cache.fresh(900, 10.0)
+    cache.put(GROUP, "open")
+    assert cache.fresh(GROUP, 10.0)
     time.sleep(0.02)
-    assert not cache.fresh(900, 0.01)
-    assert not cache.fresh(901, 10.0)
+    assert not cache.fresh(GROUP, 0.01)
+    assert not cache.fresh(group(901), 10.0)
 
 
 async def test_an_armored_body_in_a_readable_chat_reaches_the_handler_as_words(

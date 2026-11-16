@@ -17,7 +17,7 @@ import pytest
 
 from hidesay_bot import MemoryStorage, PollingConflictError, SQLiteStorage, Storage, StorageError
 
-from .fakeapi import BOT_ID
+from .fakeapi import ANNA, BOT_ID, BRUNO
 
 OTHER_BOT = 913
 
@@ -247,14 +247,22 @@ def test_discard_failed_forgets_all_some_or_none(storage: Storage) -> None:
 
 
 def test_pins_are_kept_uppercase_and_can_be_replaced(storage: Storage) -> None:
-    assert storage.get_pin(55) is None
+    assert storage.get_pin(ANNA) is None
 
-    storage.set_pin(55, "ab12cd34" * 5)
-    assert storage.get_pin(55) == "AB12CD34" * 5
+    storage.set_pin(ANNA, "ab12cd34" * 5)
+    assert storage.get_pin(ANNA) == "AB12CD34" * 5
 
-    storage.set_pin(55, "ff" * 20)
-    assert storage.get_pin(55) == "FF" * 20
-    assert storage.get_pin(56) is None
+    storage.set_pin(ANNA, "ff" * 20)
+    assert storage.get_pin(ANNA) == "FF" * 20
+    assert storage.get_pin(BRUNO) is None
+
+
+def test_a_bot_and_a_person_are_pinned_apart(storage: Storage) -> None:
+    # the server never gives the same digits twice, the storage does not count on it
+    storage.set_pin(ANNA, "AA" * 20)
+    storage.set_pin("B" + ANNA, "BB" * 20)
+    assert storage.get_pin(ANNA) == "AA" * 20
+    assert storage.get_pin("B" + ANNA) == "BB" * 20
 
 
 # --- one storage, several bots ---
@@ -263,14 +271,14 @@ def test_pins_are_kept_uppercase_and_can_be_replaced(storage: Storage) -> None:
 def test_opening_for_another_bot_shows_none_of_the_first_bots_data(storage: Storage) -> None:
     storage.accept([upd(1), upd(2)])
     storage.fail(2, "boom")
-    storage.set_pin(55, "AA" * 20)
+    storage.set_pin(ANNA, "AA" * 20)
 
     storage.open(OTHER_BOT)
 
     assert storage.accepted_max() is None
     assert storage.pending() == []
     assert storage.failed() == []
-    assert storage.get_pin(55) is None
+    assert storage.get_pin(ANNA) is None
     assert ids(storage.accept([upd(1)])) == [1]
 
 
@@ -301,7 +309,7 @@ def test_two_bots_in_one_sqlite_file_do_not_see_each_other(db_path: Path) -> Non
     second.open(OTHER_BOT)
     try:
         first.accept([upd(1), upd(2), upd(3)])
-        first.set_pin(55, "AA" * 20)
+        first.set_pin(ANNA, "AA" * 20)
         second.accept([upd(1)])
         second.fail(1, "boom")
 
@@ -311,7 +319,7 @@ def test_two_bots_in_one_sqlite_file_do_not_see_each_other(db_path: Path) -> Non
         assert second.pending() == []
         assert first.failed() == []
         assert [f.update_id for f in second.failed()] == [1]
-        assert second.get_pin(55) is None
+        assert second.get_pin(ANNA) is None
         assert second.requeue_failed() == 1
         assert ids(first.pending()) == [1, 2, 3]
         assert first.discard_failed() == 0
@@ -331,7 +339,7 @@ def test_sqlite_keeps_everything_across_a_restart(db_path: Path) -> None:
     before.begin(2)
     before.finish(1)
     before.fail(3, "ValueError: nope")
-    before.set_pin(55, "ab" * 20)
+    before.set_pin(ANNA, "ab" * 20)
     before.close()
 
     after = SQLiteStorage(db_path)
@@ -342,7 +350,7 @@ def test_sqlite_keeps_everything_across_a_restart(db_path: Path) -> None:
         # the run counter is what catches a crash loop, so it has to survive one
         assert after.begin(2) == 3
         assert [(f.update_id, f.error) for f in after.failed()] == [(3, "ValueError: nope")]
-        assert after.get_pin(55) == "AB" * 20
+        assert after.get_pin(ANNA) == "AB" * 20
         assert after.accept([upd(3)]) == []
     finally:
         after.close()
@@ -452,8 +460,8 @@ def test_sqlite_accept_rolls_back_on_an_error_that_is_not_sqlites(sqlite: SQLite
         ("failed", ()),
         ("requeue_failed", ()),
         ("discard_failed", ()),
-        ("get_pin", (55,)),
-        ("set_pin", (55, "AA" * 20)),
+        ("get_pin", (ANNA,)),
+        ("set_pin", (ANNA, "AA" * 20)),
     ],
 )
 def test_sqlite_refuses_to_work_before_open(db_path: Path, method: str, args: tuple[Any, ...]) -> None:

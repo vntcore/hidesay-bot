@@ -11,7 +11,7 @@ A handler for messages gets a `Message`:
 @bot.on_message()
 async def show(message):
     print(message.id)                    # 1834, unique inside the chat
-    print(message.chat.id)               # 7781
+    print(message.chat.id)               # 48213907, or G48213907 in a group
     print(message.chat.kind)             # ChatKind.PRIVATE, GROUP or CHANNEL
     print(message.from_user.username)    # "anna", or None if she has no handle
     print(message.text)                  # what she wrote, or None
@@ -83,9 +83,9 @@ await message.answer("Got it")                   # the same as quote=False
 ### Sending into any chat
 
 ```python
-await bot.send_message(7781, "Last night's backup finished fine.")
+await bot.send_message("48213907", "Last night's backup finished fine.")
 await bot.send_message(message.chat, "Hello")    # a chat object works too
-await bot.send_message(7781, "Done", reply_to=1834)
+await bot.send_message("48213907", "Done", reply_to=1834)
 ```
 
 The bot can only write into chats it is in. In a private chat, the person must have started
@@ -140,7 +140,7 @@ back the message it already wrote. You can pass your own:
 import uuid
 
 send_id = uuid.uuid4()          # save it with your job, before sending
-await bot.send_message(7781, "Invoice 2026-118 is ready", send_id=send_id)
+await bot.send_message("48213907", "Invoice 2026-118 is ready", send_id=send_id)
 ```
 
 If your own program crashes and runs the job again with the same `send_id`, the person still
@@ -215,7 +215,7 @@ fits readable chats:
 from hidesay_bot import Client
 
 with Client() as api:
-    api.send_message(7781, "Backup finished.")
+    api.send_message("48213907", "Backup finished.")
 ```
 
 For encrypted chats outside a handler, use the bot's methods, which encrypt:
@@ -226,7 +226,7 @@ from hidesay_bot import Bot
 
 async def main():
     async with Bot(pgp_private_key="bot-key.asc", pgp_passphrase=...) as bot:
-        await bot.send_message(7781, "Backup finished.")
+        await bot.send_message("48213907", "Backup finished.")
 
 asyncio.run(main())
 ```

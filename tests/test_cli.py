@@ -200,7 +200,7 @@ def test_whoami_describes_an_open_bot(server, capsys):
     assert cli.main(["whoami"]) == 0
 
     assert capsys.readouterr().out.splitlines() == [
-        "@testbot (id 412) - Test",
+        "@testbot (id B10000412) - Test",
         "mode:     open",
         "status:   active, privacy mode on",
         "webhook:  none (polling)",

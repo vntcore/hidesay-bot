@@ -43,4 +43,5 @@ A few need more:
 - `10_encrypted_bot.py` needs a key: run `11_generate_pgp_keys.py` first. Publishing the key is
   one-way: try it on a test bot.
 - `09_fastapi_webhook.py` needs a public HTTPS address that reaches the app, and a secret.
-- `14`, `15` and `20` have admin commands: set `ADMIN_ID` to your own user ID.
+- `14`, `15` and `20` have admin commands: set `ADMIN_ID` to your own user ID, the eight
+  digits on your profile in the app.

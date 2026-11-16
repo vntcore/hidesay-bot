@@ -60,7 +60,7 @@ _JS_SPACE_RUN = re.compile("[" + re.escape(JS_SPACE) + "]+")
 # use these with fullmatch: python's $ also matches before a final newline and
 # \d takes any unicode digit, where the server's javascript does neither
 COMMAND_RE = re.compile(r"[a-z0-9_]{1,32}")
-SCOPE_RE = re.compile(r"default|private|groups|groupAdmins|chat:[0-9]{1,12}")
+SCOPE_RE = re.compile(r"default|private|groups|groupAdmins|chat:[GC][1-9][0-9]{7}")
 SECRET_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
 HANDLE_RE = re.compile(r"[A-Za-z0-9_]{3,32}")
 FINGERPRINT_RE = re.compile(r"[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64}")
@@ -92,6 +92,33 @@ def check_id(value: object, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValidationError(f"{field} must be a positive integer, got {value!r}", field=field)
     return value
+
+
+# people, bots, groups and channels: eight digits, and a letter for all but people
+# eight digits that do not start with 0: 10000000-99999999, the pool the server draws from
+CHAT_ID_RE = re.compile(r"[GC]?[1-9][0-9]{7}")
+USER_ID_RE = re.compile(r"B?[1-9][0-9]{7}")
+ID_MIN = 10_000_000
+ID_MAX = 99_999_999
+
+
+def _public_id(value: object, field: str, shape: re.Pattern[str], example: str) -> str:
+    # a bare number is a person's id, which is the one kind that has no letter
+    if isinstance(value, int) and not isinstance(value, bool) and ID_MIN <= value <= ID_MAX:
+        return str(value)
+    if isinstance(value, str):
+        text = value.strip().upper()
+        if shape.fullmatch(text):
+            return text
+    raise ValidationError(f"{field} must be an id like {example}, got {value!r}", field=field)
+
+
+def check_chat_id(value: object, field: str = "chat_id") -> str:
+    return _public_id(value, field, CHAT_ID_RE, "'G48213907', 'C48213907' or '48213907'")
+
+
+def check_user_id(value: object, field: str = "user_id") -> str:
+    return _public_id(value, field, USER_ID_RE, "'48213907' or 'B48213907'")
 
 
 def check_text(text: object, *, field: str = "text", limit: int = TEXT_MAX) -> str:
@@ -183,7 +210,7 @@ def check_scope(scope: object) -> str:
     if isinstance(scope, str) and SCOPE_RE.fullmatch(scope):
         return scope
     raise ValidationError(
-        f"unknown scope {scope!r}: use default, private, groups, groupAdmins or chat:<id>",
+        f"unknown scope {scope!r}: use default, private, groups, groupAdmins or chat:<id> (chat:G48213907)",
         field="scope",
     )
 

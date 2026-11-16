@@ -25,8 +25,33 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 
-BOT_ID = 412
+BOT_ID = 10_000_412
 TOKEN = f"pgpbot_{BOT_ID}." + "A" * 43
+
+
+# Ids the way the server writes them since November 2026: a person's eight digits bare,
+# a bot's, a group's and a channel's with a letter in front. Tests keep their short numbers
+# (chat 7, group 900, anna 55) and these turn them into what goes over the wire.
+def person(n: int) -> str:
+    return str(10_000_000 + n)
+
+
+def group(n: int) -> str:
+    return f"G{10_000_000 + n}"
+
+
+def channel(n: int) -> str:
+    return f"C{10_000_000 + n}"
+
+
+_KINDS = {"group": group, "channel": channel}
+
+BOT = f"B{BOT_ID}"
+ANNA = person(55)
+BRUNO = person(56)
+# what add_chat(7) and add_chat(900, "group") make: the private chat most tests talk in, and the group
+CHAT = person(7)
+GROUP = group(900)
 BASE = "https://api.test"
 MEDIA_ID = "0f3c5a3e-1111-2222-3333-444455556666"
 
@@ -53,7 +78,7 @@ class Fault:
 
 @dataclass
 class FakeChat:
-    id: int
+    id: str
     kind: str = "private"
     title: str | None = None
     username: str | None = None
@@ -78,7 +103,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         self.token = token
         self.lock = threading.RLock()
         self.me: dict[str, Any] = {
-            "id": BOT_ID,
+            "id": BOT,
             "username": "testbot",
             "name": "Test",
             "about": None,
@@ -92,7 +117,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
             "queued": 0,
             "limits": {"textMax": 4096, "pollTimeoutMaxS": 50, "sendsPerSecond": 30, "apiCallsPerMinute": 600},
         }
-        self.chats: dict[int, FakeChat] = {}
+        self.chats: dict[str, FakeChat] = {}
         self.queue: list[dict[str, Any]] = []
         self.next_update_id = 1
         self.messages: dict[int, dict[str, Any]] = {}
@@ -101,7 +126,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         self.callbacks: dict[str, dict[str, Any]] = {}
         self.webhook: dict[str, Any] = {"url": None, "secret": None, "failures": 0, "lastError": None}
         self.commands: dict[str, list[dict[str, str]]] = {}
-        self.user_keys: dict[int, dict[str, Any]] = {}
+        self.user_keys: dict[str, dict[str, Any]] = {}
         self.handles: dict[str, dict[str, Any]] = {}
         self.media: dict[str, bytes] = {}
         self.requests: list[dict[str, Any]] = []
@@ -112,11 +137,21 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
 
     # --- scripting ---
 
-    def add_chat(self, chat_id: int, kind: str = "private", **fields: Any) -> FakeChat:
-        chat = FakeChat(chat_id, kind, **fields)
+    def key(self, chat_id: int | str, kind: str | None = None) -> str:
+        """The wire id of a chat a test names by its short number (7, 900), or the id itself."""
+        if isinstance(chat_id, str):
+            return chat_id
+        with self.lock:
+            for chat in self.chats.values():
+                if chat.id.lstrip("GC") == person(chat_id) and kind in (None, chat.kind):
+                    return chat.id
+        return _KINDS.get(kind or "private", person)(chat_id)
+
+    def add_chat(self, chat_id: int | str, kind: str = "private", **fields: Any) -> FakeChat:
+        chat = FakeChat(chat_id if isinstance(chat_id, str) else _KINDS.get(kind, person)(chat_id), kind, **fields)
         if kind == "private" and chat.peer is None:
             chat.peer = {
-                "id": 55,
+                "id": ANNA,
                 "username": "anna",
                 "firstName": "Anna",
                 "lastName": None,
@@ -124,7 +159,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
                 "hasKey": True,
             }
         with self.lock:
-            self.chats[chat_id] = chat
+            self.chats[chat.id] = chat
         return chat
 
     def add_handle(
@@ -153,23 +188,24 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
 
     def push_message(
         self,
-        chat_id: int,
+        chat_id: int | str,
         text: str | None = None,
         *,
         armored: str | None = None,
-        from_id: int | None = 55,
+        from_id: int | str | None = 55,
         message_id: int | None = None,
         edited: bool = False,
         media: list[dict[str, Any]] | None = None,
         reply_to: int | None = None,
     ) -> int:
-        chat = self.chats[chat_id]
+        chat = self.chats[self.key(chat_id)]
+        sender = person(from_id) if isinstance(from_id, int) else from_id
         message: dict[str, Any] = {
             "id": message_id or self._new_message_id(),
             "chat": chat.ref(),
             "from": None
             if from_id is None
-            else {"id": from_id, "username": f"user{from_id}", "firstName": "User", "lastName": None, "isBot": False},
+            else {"id": sender, "username": f"user{from_id}", "firstName": "User", "lastName": None, "isBot": False},
             "date": 1791000000000,
             "replyTo": reply_to,
             "kind": "user",
@@ -182,7 +218,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         return self.push("edited_message" if edited else "message", message=message)
 
     def push_callback(
-        self, chat_id: int, message_id: int, data: str, *, from_id: int = 55, expires_in: float = 60
+        self, chat_id: int | str, message_id: int, data: str, *, from_id: int | str = 55, expires_in: float = 60
     ) -> str:
         callback_id = uuid.uuid4().hex[:22]
         expires = int((time.time() + expires_in) * 1000)
@@ -192,8 +228,14 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
             "callback_query",
             callback={
                 "id": callback_id,
-                "from": {"id": from_id, "username": "anna", "firstName": "Anna", "lastName": None, "isBot": False},
-                "chat": self.chats[chat_id].ref(),
+                "from": {
+                    "id": person(from_id) if isinstance(from_id, int) else from_id,
+                    "username": "anna",
+                    "firstName": "Anna",
+                    "lastName": None,
+                    "isBot": False,
+                },
+                "chat": self.chats[self.key(chat_id)].ref(),
                 "messageId": message_id,
                 "data": data,
                 "expiresAt": expires,
@@ -390,9 +432,9 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
                 return err(410, "callback_expired", "this callback is too old to answer")
             callback.update(answered=True, answer=body)
             return ok({"answered": True})
-        m = re.fullmatch(r"/chats/(\d+)(/.*)?", path)
+        m = re.fullmatch(r"/chats/([^/]+)(/.*)?", path)
         if m:
-            return self._chat(method, int(m.group(1)), m.group(2) or "", body)
+            return self._chat(method, m.group(1), m.group(2) or "", body)
         m = re.fullmatch(r"/resolve/([^/]+)", path)
         if m:
             name = m.group(1).lower()
@@ -400,9 +442,9 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
                 return err(400, "bad_request", "username: 3-32 characters, letters, digits and underscore")
             found = self.handles.get(name)
             return ok(found) if found else err(404, "username_not_found", "nobody and no chat answers to that name")
-        m = re.fullmatch(r"/users/(\d+)/key", path)
+        m = re.fullmatch(r"/users/([^/]+)/key", path)
         if m:
-            key = self.user_keys.get(int(m.group(1)))
+            key = self.user_keys.get(m.group(1))
             return ok(key) if key else err(404, "user_not_found", "no such user, or no chat in common")
         if (method, path) == ("POST", "/token/revoke"):
             self.revoked = True
@@ -440,7 +482,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         return view
 
     def _send(self, body: dict[str, Any]) -> httpx2.Response:
-        chat = self.chats.get(body.get("chatId"))  # type: ignore[arg-type]
+        chat = self.chats.get(str(body.get("chatId")))
         if chat is None or chat.gone:
             return err(404, "chat_not_found", "no such chat, or the bot is not in it")
         send_id = body.get("sendId")
@@ -467,7 +509,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         return ok(self._view(row), 201)
 
     def _edit(self, message_id: int, body: dict[str, Any]) -> httpx2.Response:
-        chat = self.chats.get(body.get("chatId"))  # type: ignore[arg-type]
+        chat = self.chats.get(str(body.get("chatId")))
         if chat is None:
             return err(404, "chat_not_found", "no such chat, or the bot is not in it")
         row = self.messages.get(message_id)
@@ -485,7 +527,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         return ok(self._view(row))
 
     def _delete(self, message_id: int, query: dict[str, str], body: dict[str, Any]) -> httpx2.Response:
-        chat_id = int(query.get("chatId") or body.get("chatId") or 0)
+        chat_id = str(query.get("chatId") or body.get("chatId") or "")
         if chat_id not in self.chats:
             return err(404, "chat_not_found", "no such chat, or the bot is not in it")
         row = self.messages.pop(message_id, None)
@@ -493,7 +535,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
             return err(404, "message_not_found", "no such message in this chat")
         return ok({"deleted": True})
 
-    def _chat(self, method: str, chat_id: int, rest: str, body: dict[str, Any]) -> httpx2.Response:
+    def _chat(self, method: str, chat_id: str, rest: str, body: dict[str, Any]) -> httpx2.Response:
         chat = self.chats.get(chat_id)
         if chat is None or chat.gone:
             return err(404, "chat_not_found", "no such chat, or the bot is not in it")
@@ -523,9 +565,9 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         if rest.startswith("/members"):
             if chat.kind == "private":
                 return err(400, "bad_request", "a private chat has no members")
-            m = re.fullmatch(r"/members/(\d+)", rest)
+            m = re.fullmatch(r"/members/([^/]+)", rest)
             if m:
-                member = next((x for x in chat.members if x["user"]["id"] == int(m.group(1))), None)
+                member = next((x for x in chat.members if x["user"]["id"] == m.group(1)), None)
                 return ok(member) if member else err(404, "member_not_found", "not a member of this chat")
             return ok({"members": chat.members, "memberCount": len(chat.members)})
         if rest == "/leave":

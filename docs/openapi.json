@@ -2,9 +2,9 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Hidesay Bot API",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "summary": "The HTTP API a bot uses to talk to a Hidesay server.",
-    "description": "This is the API a bot programme speaks. It lives under `/bot/v1` on the same server the app uses.\n\nA bot is an account that a programme controls. A person makes it from the `@bot` console inside the app, gets a token, and from then on the programme does everything with that token. A bot has no session, no wallet, no calls and no devices: it has this API and nothing else.\n\n**Envelope.** Every answer is JSON. A success is `{\"ok\": true, \"result\": ...}`. A failure is `{\"ok\": false, \"error\": {\"status\", \"code\", \"message\"}}` with the same status on the HTTP line. The `code` is stable and is what your programme should branch on; the `message` is for a person reading a log.\n\n**Two kinds of body.** A chat is either *readable* or *end-to-end encrypted*, and the server tells you which (`mode` on a chat, `expected` on an error). In a readable chat you send and receive `text`. In an encrypted chat you send and receive `armored`: an ASCII-armoured OpenPGP message. A bot that has published a public key (`PUT /key`) is *protected*: its private chats become encrypted and people's phones seal every message to it. A bot without a key is *open*: its private chats are readable, the server passes the words along, and the app tells people so before they write. Groups follow the group: a group with open history is readable, any other group is encrypted.\n\n**Updates.** What happens in chats reaches the bot as updates, each with a growing `updateId`. Fetch them with `GET /updates` (long polling) or have them posted to a webhook (`POST /webhook`). Either way delivery is in order and at least once: keep the last `updateId` you handled and ignore anything you have already seen. Updates older than 72 hours are dropped, and so are the oldest when more than 10 000 pile up unread.\n\n**Limits.** 600 API calls a minute per bot and 1 200 a minute per address. Sending is 30 messages a second overall, 20 a minute into any one group and 1 a second into any one private chat; past that you get `429 flood_wait` with `retryAfter` in seconds and a `Retry-After` header. Honour it: the counter does not move while you are waiting. Resolving a handle has a window of its own, 60 a minute, where a name nobody holds counts as five.\n\n**Privacy, in one paragraph.** A bot only ever receives what was addressed to it. In a private chat that is everything the person writes. In a group it is a command (`/start`, `/start@yourbot`), a mention (`@yourbot`) or a reply to one of the bot's messages, unless the owner switched *privacy mode* off, in which case the whole room is delivered and every member can see that in the app. In an encrypted group the sender's phone applies that rule and seals the message to the bot as well; the server cannot read the words and does not try.\n\n**What a bot cannot do, on purpose.** Send files (it speaks in words and buttons; in a readable chat it does see pictures people sent), secret messages, payments, wallets, calls, devices, push or phone numbers (those are a person's), join a chat by itself (an administrator adds it), read history from before it arrived, inline mode, web apps, games, login buttons, reply keyboards, scheduled sends, or edit other people's messages. It cannot search for people either: a handle somebody typed resolves to an id, because that handle is already public, and there is no listing and nothing by phone number. Each of these is left out by decision: it would either give a program power over people it has no business having, or make the server read what it promises not to.",
+    "description": "This is the API a bot programme speaks. It lives under `/bot/v1` on the same server the app uses.\n\nA bot is an account that a programme controls. A person makes it from the `@bot` console inside the app, gets a token, and from then on the programme does everything with that token. A bot has no session, no wallet, no calls and no devices: it has this API and nothing else.\n\n**Envelope.** Every answer is JSON. A success is `{\"ok\": true, \"result\": ...}`. A failure is `{\"ok\": false, \"error\": {\"status\", \"code\", \"message\"}}` with the same status on the HTTP line. The `code` is stable and is what your programme should branch on; the `message` is for a person reading a log.\n\n**Two kinds of body.** A chat is either *readable* or *end-to-end encrypted*, and the server tells you which (`mode` on a chat, `expected` on an error). In a readable chat you send and receive `text`. In an encrypted chat you send and receive `armored`: an ASCII-armoured OpenPGP message. A bot that has published a public key (`PUT /key`) is *protected*: its private chats become encrypted and people's phones seal every message to it. A bot without a key is *open*: its private chats are readable, the server passes the words along, and the app tells people so before they write. Groups follow the group: a group with open history is readable, any other group is encrypted.\n\n**Updates.** What happens in chats reaches the bot as updates, each with a growing `updateId`. Fetch them with `GET /updates` (long polling) or have them posted to a webhook (`POST /webhook`). Either way delivery is in order and at least once: keep the last `updateId` you handled and ignore anything you have already seen. Updates older than 72 hours are dropped, and so are the oldest when more than 10 000 pile up unread.\n\n**Limits.** 600 API calls a minute per bot and 1 200 a minute per address. Sending is 30 messages a second overall, 20 a minute into any one group and 1 a second into any one private chat; past that you get `429 flood_wait` with `retryAfter` in seconds and a `Retry-After` header. Honour it: the counter does not move while you are waiting. Resolving a handle has a window of its own, 60 a minute, where a name nobody holds counts as five.\n\n**Privacy, in one paragraph.** A bot only ever receives what was addressed to it. In a private chat that is everything the person writes. In a group it is a command (`/start`, `/start@yourbot`), a mention (`@yourbot`, by any of the bot's handles) or a reply to one of the bot's messages, unless the owner switched *privacy mode* off, in which case the whole room is delivered and every member can see that in the app. In an encrypted group the sender's phone applies that rule and seals the message to the bot as well; the server cannot read the words and does not try.\n\n**What a bot cannot do, on purpose.** Send files (it speaks in words and buttons; in a readable chat it does see pictures people sent), secret messages, payments, wallets, calls, devices, push or phone numbers (those are a person's), join a chat by itself (an administrator adds it), read history from before it arrived, inline mode, web apps, games, login buttons, reply keyboards, scheduled sends, or edit other people's messages. It cannot search for people either: a handle somebody typed resolves to an id, because that handle is already public, and there is no listing and nothing by phone number. Each of these is left out by decision: it would either give a program power over people it has no business having, or make the server read what it promises not to.\n\n**Ids.** People, bots, groups and channels have ids of eight random digits, and the character in front says what it is: `48213907` a person, `B48213907` a bot, `G48213907` a group, `C48213907` a channel. They are strings everywhere, letter included. A private chat goes by the person on the other side, so in a private message `chat.id` and `from.id` are the same. Until November 2026 ids were bare integers from a counter; every account and chat got a new one then, and an id saved before that points at nothing.",
     "contact": {
       "name": "Hidesay",
       "url": "https://hidesay.com"
@@ -57,9 +57,11 @@
                 "example": {
                   "ok": true,
                   "result": {
-                    "id": 412,
+                    "id": "B41205736",
                     "username": "weatherbot",
+                    "usernames": ["forecastbot"],
                     "name": "Weather",
+                    "lastName": null,
                     "about": "Forecasts for any town in Italy",
                     "description": "Send /weather Rome and get the next three days.",
                     "mode": "open",
@@ -70,6 +72,11 @@
                     "webhook": { "url": null, "hasSecret": false, "failures": 0, "lastError": null },
                     "queued": 0,
                     "limits": {
+                      "nameMax": 64,
+                      "lastNameMax": 64,
+                      "usernamesMax": 10,
+                      "aboutMax": 280,
+                      "descriptionMax": 512,
                       "textMax": 4096,
                       "armoredMax": 131072,
                       "keyboardRows": 20,
@@ -144,8 +151,8 @@
                       "kind": "message",
                       "message": {
                         "id": 90213,
-                        "chat": { "id": 7781, "kind": "private" },
-                        "from": { "id": 55, "username": "anna", "firstName": "Anna", "lastName": null, "isBot": false },
+                        "chat": { "id": "48213907", "kind": "private" },
+                        "from": { "id": "48213907", "username": "anna", "firstName": "Anna", "lastName": null, "isBot": false },
                         "date": 1791000000000,
                         "replyTo": null,
                         "kind": "user",
@@ -196,7 +203,7 @@
         "tags": ["Updates"],
         "operationId": "setWebhook",
         "summary": "Set a webhook",
-        "description": "From now on every update is POSTed as JSON to `url`, one update per request, in order, with the header `User-Agent: Hidesay-Bot-Api/1`. If you give a `secret`, every delivery carries it in the header `X-Hidesay-Bot-Api-Secret-Token`: check it and refuse anything without it.\n\nAnswer with any 2xx within 10 seconds and the update is considered delivered. Anything else, a timeout or a redirect counts as a failure: the server backs off (one second, then doubling, up to an hour) and tries that same update again, so delivery is at least once and never out of order. After ten failures in a row the owner is told in the app. Updates still queue while the webhook is failing and are kept for 72 hours.\n\nThe URL must be `https`, carry no credentials or fragment, and resolve to a public address. Setting a webhook ends any poll in progress; `GET /updates` refuses while one is set.",
+        "description": "From now on every update is POSTed as JSON to `url`, one update per request, in order, with the header `User-Agent: Hidesay-Bot-Api/1`. If you give a `secret`, every delivery carries it in the header `X-Hidesay-Bot-Api-Secret-Token`: check it and refuse anything without it.\n\nAnswer with any 2xx within 10 seconds and the update is considered delivered. Anything else, a timeout or a redirect counts as a failure: the server backs off (one second, then doubling, up to an hour) and tries that same update again, so delivery is at least once and never out of order. After ten failures in a row the owner is told in the app. Updates still queue while the webhook is failing and are kept for 72 hours.\n\nThe URL must be `https`, carry no credentials or fragment, and resolve to a public address. Setting a webhook ends any poll in progress; `GET /updates` refuses while one is set.\n\nDeliveries arrive from addresses that change over time, so don't allow or block them by IP: check the secret token instead.",
         "requestBody": {
           "required": true,
           "content": {
@@ -225,7 +232,11 @@
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Paused" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": {
+            "description": "The server couldn't look the host up just now (`try_again`). Nothing is wrong with the URL: send the same request again in a minute.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "ok": false, "error": { "status": 503, "code": "try_again", "message": "could not check the url right now, try again in a minute" } } } }
+          }
         }
       },
       "delete": {
@@ -317,7 +328,7 @@
         "tags": ["Commands"],
         "operationId": "setCommands",
         "summary": "Replace the commands of one scope",
-        "description": "The whole list of that scope, replaced. Up to 100 commands; a command is 1 to 32 lowercase letters, digits and underscores (a leading slash is dropped), its description 1 to 256 characters. Duplicates are folded to the first.\n\nScopes resolve the way Telegram's do, narrowest first: in a private chat `private` then `default`; in a group `chat:<id>`, then `groupAdmins` for administrators, then `groups`, then `default`. An empty scope does not hide a wider one. The owner can edit the same lists in the console; whichever wrote last wins.",
+        "description": "The whole list of that scope, replaced. Up to 100 commands; a command is 1 to 32 lowercase letters, digits and underscores (a leading slash is dropped), its description 1 to 256 characters. Duplicates are folded to the first.\n\nScopes resolve the way Telegram's do, narrowest first: in a private chat `private` then `default`; in a group `chat:G48213907` (its own id), then `groupAdmins` for administrators, then `groups`, then `default`. An empty scope does not hide a wider one. The owner can edit the same lists in the console; whichever wrote last wins.",
         "requestBody": {
           "required": true,
           "content": {
@@ -343,7 +354,7 @@
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Paused" },
-          "404": { "description": "A `chat:<id>` scope names a chat the bot is not in.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "A `chat:G…` or `chat:C…` scope names a chat the bot is not in.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
@@ -378,8 +389,8 @@
             "application/json": {
               "schema": { "$ref": "#/components/schemas/SendMessage" },
               "examples": {
-                "readable": { "summary": "A readable chat, with buttons", "value": { "chatId": 7781, "text": "Rome, next three days: sun, sun, rain. Want the hourly view?", "markup": { "inlineKeyboard": [ [ { "text": "Hourly", "callbackData": "hourly:rome" }, { "text": "Another town", "callbackData": "ask" } ], [ { "text": "Open on the web", "url": "https://example.org/rome" } ] ] }, "sendId": "7a1a0f1c-2a86-4b94-9c38-0f1e7c3a9a10" } },
-                "encrypted": { "summary": "An encrypted chat", "value": { "chatId": 7781, "armored": "-----BEGIN PGP MESSAGE-----\n...\n-----END PGP MESSAGE-----", "replyTo": 90213 } }
+                "readable": { "summary": "A readable chat, with buttons", "value": { "chatId": "48213907", "text": "Rome, next three days: sun, sun, rain. Want the hourly view?", "markup": { "inlineKeyboard": [ [ { "text": "Hourly", "callbackData": "hourly:rome" }, { "text": "Another town", "callbackData": "ask" } ], [ { "text": "Open on the web", "url": "https://example.org/rome" } ] ] }, "sendId": "7a1a0f1c-2a86-4b94-9c38-0f1e7c3a9a10" } },
+                "encrypted": { "summary": "An encrypted chat", "value": { "chatId": "48213907", "armored": "-----BEGIN PGP MESSAGE-----\n...\n-----END PGP MESSAGE-----", "replyTo": 90213 } }
               }
             }
           }
@@ -422,7 +433,7 @@
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/EditMessage" },
-              "example": { "chatId": 7781, "text": "Rome: hourly view sent above.", "markup": null }
+              "example": { "chatId": "48213907", "text": "Rome: hourly view sent above.", "markup": null }
             }
           }
         },
@@ -441,11 +452,11 @@
         "summary": "Delete a message",
         "description": "The bot's own messages anywhere; anybody's in a group or channel where the bot holds the *delete messages* right. Secret messages and service notices cannot be deleted by a bot. `chatId` goes in the JSON body or in the query.",
         "parameters": [
-          { "name": "chatId", "in": "query", "schema": { "type": "integer" }, "description": "The chat, when not sent in the body." }
+          { "name": "chatId", "in": "query", "schema": { "$ref": "#/components/schemas/ChatIdIn" }, "description": "The chat, when not sent in the body." }
         ],
         "requestBody": {
           "required": false,
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "chatId": { "type": "integer" } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "chatId": { "$ref": "#/components/schemas/ChatIdIn" } } } } }
         },
         "responses": {
           "200": { "description": "Deleted for everyone, for good. `deleted` is always true here: a message that is already gone answers 404 `message_not_found`, so a retry after a timeout can treat that 404 as done.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "const": true }, "result": { "type": "object", "properties": { "deleted": { "type": "boolean" } } } } } } } },
@@ -502,7 +513,7 @@
         "summary": "A chat the bot is in",
         "description": "Its kind, its `mode` (which body to send), and for a group the bot's own seat. A private chat carries the other person and whether they blocked the bot.",
         "responses": {
-          "200": { "description": "The chat.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "const": true }, "result": { "$ref": "#/components/schemas/Chat" } } }, "example": { "ok": true, "result": { "id": 9910, "kind": "group", "title": "Runners of Milan", "username": "milanrunners", "mode": "protected", "description": null, "memberCount": 42, "historyVisible": false, "slowModeSeconds": 0, "me": { "status": "member", "rights": 255, "restrictedUntil": null } } } } } },
+          "200": { "description": "The chat.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "const": true }, "result": { "$ref": "#/components/schemas/Chat" } } }, "example": { "ok": true, "result": { "id": "G99104328", "kind": "group", "title": "Runners of Milan", "username": "milanrunners", "mode": "protected", "description": null, "memberCount": 42, "historyVisible": false, "slowModeSeconds": 0, "me": { "status": "member", "rights": 255, "restrictedUntil": null } } } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Paused" },
           "404": { "$ref": "#/components/responses/ChatNotFound" },
@@ -547,7 +558,7 @@
     "/chats/{chatId}/members/{userId}": {
       "parameters": [
         { "$ref": "#/components/parameters/chatId" },
-        { "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }
+        { "name": "userId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/UserId" }, "description": "A person's or a bot's id. A person's also works as the bare digits." }
       ],
       "get": {
         "tags": ["Chats"],
@@ -615,7 +626,7 @@
       }
     },
     "/users/{userId}/key": {
-      "parameters": [ { "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+      "parameters": [ { "name": "userId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/UserId" }, "description": "A person's or a bot's id. A person's also works as the bare digits." } ],
       "get": {
         "tags": ["Chats"],
         "operationId": "getUserKey",
@@ -648,7 +659,7 @@
     "update": {
       "post": {
         "summary": "An update, delivered to your webhook",
-        "description": "One update per request, in order. Answer any 2xx within 10 seconds. The header `X-Hidesay-Bot-Api-Secret-Token` carries the secret you set, if any; `User-Agent` is `Hidesay-Bot-Api/1`. Deliveries are at least once: a slow 2xx can be retried, so treat `updateId` as the thing that makes a delivery new.",
+        "description": "One update per request, in order. Answer any 2xx within 10 seconds. The header `X-Hidesay-Bot-Api-Secret-Token` carries the secret you set, if any; `User-Agent` is `Hidesay-Bot-Api/1`. Deliveries are at least once: a slow 2xx can be retried, so treat `updateId` as the thing that makes a delivery new. They come from addresses that change over time: trust the secret token, not the IP.",
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Update" } } }
@@ -669,7 +680,7 @@
       }
     },
     "parameters": {
-      "chatId": { "name": "chatId", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "A chat the bot is in. Any other id answers `chat_not_found`." }
+      "chatId": { "name": "chatId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/ChatId" }, "description": "A chat the bot is in: `G…` a group, `C…` a channel, a person's id for the private chat with them. Any other id answers `chat_not_found`." }
     },
     "responses": {
       "Unauthorized": { "description": "`unauthorized`: missing, revoked or invalid token.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "ok": false, "error": { "status": 401, "code": "unauthorized", "message": "missing, revoked or invalid bot token" } } } } },
@@ -704,7 +715,7 @@
           "unauthorized", "bot_paused", "rate_limited", "flood_wait", "slow_mode",
           "bad_request", "wrong_body_kind", "bad_markup", "bad_webhook", "too_large",
           "chat_not_found", "message_not_found", "member_not_found", "user_not_found", "username_not_found", "no_user_key", "chat_is_open",
-          "user_gone", "blocked_by_user", "forbidden", "conflict", "webhook_active",
+          "user_gone", "blocked_by_user", "forbidden", "conflict", "webhook_active", "try_again",
           "callback_not_found", "callback_answered", "callback_expired",
           "not_found", "internal"
         ]
@@ -714,14 +725,35 @@
         "required": ["ok", "result"],
         "properties": { "ok": { "const": true }, "result": { "$ref": "#/components/schemas/Self" } }
       },
+      "UserId": {
+        "type": "string",
+        "pattern": "^B?\\d{8}$",
+        "description": "A person (`48213907`) or a bot (`B48213907`): eight random digits, never handed out twice, with a B in front for a bot.",
+        "examples": ["48213907", "B41205736"]
+      },
+      "ChatId": {
+        "type": "string",
+        "pattern": "^[GC]?\\d{8}$",
+        "description": "`G48213907` a group, `C48213907` a channel, `48213907` the private chat with that person. A private chat has no id of its own: it goes by the person on the other side.",
+        "examples": ["G99104328", "C30571846", "48213907"]
+      },
+      "ChatIdIn": {
+        "description": "A chat id as a string, letter included. The private chat with a person also takes their id as a bare number.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ChatId" },
+          { "type": "integer", "minimum": 10000000, "maximum": 99999999, "description": "A person's id: the private chat with them." }
+        ]
+      },
       "Self": {
         "type": "object",
         "description": "The bot as it sees itself. No owner and no token are ever included.",
         "properties": {
-          "id": { "type": "integer" },
-          "username": { "type": "string" },
+          "id": { "type": "string", "pattern": "^B\\d{8}$", "description": "The bot's own id: B and eight digits." },
+          "username": { "type": "string", "description": "The main handle." },
+          "usernames": { "type": "array", "items": { "type": "string" }, "description": "The other handles the owner added, oldest first. Each one reaches the bot exactly like the main one: in a link, in a mention, after the `@` of a command." },
           "name": { "type": "string" },
-          "about": { "type": ["string", "null"], "description": "The one line under the name on the profile." },
+          "lastName": { "type": ["string", "null"] },
+          "about": { "type": ["string", "null"], "description": "The bio under the name on the profile: up to `limits.aboutMax` characters, line breaks allowed." },
           "description": { "type": ["string", "null"], "description": "What the bot does, shown before the first message." },
           "mode": { "$ref": "#/components/schemas/Mode" },
           "fingerprint": { "type": ["string", "null"] },
@@ -752,8 +784,8 @@
       },
       "Scope": {
         "type": "string",
-        "description": "`default`, `private`, `groups`, `groupAdmins`, or `chat:<id>` for one chat the bot is in. Missing means `default`.",
-        "pattern": "^(default|private|groups|groupAdmins|chat:\\d{1,12})$"
+        "description": "`default`, `private`, `groups`, `groupAdmins`, or `chat:<id>` for one group or channel the bot is in (`chat:G48213907`). Missing means `default`.",
+        "pattern": "^(default|private|groups|groupAdmins|chat:[GC]\\d{8})$"
       },
       "Command": {
         "type": "object",
@@ -796,7 +828,7 @@
         "required": ["chatId"],
         "additionalProperties": false,
         "properties": {
-          "chatId": { "type": "integer" },
+          "chatId": { "$ref": "#/components/schemas/ChatIdIn" },
           "text": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "Readable chats. No control characters apart from newline and tab." },
           "armored": { "type": "string", "maxLength": 131072, "description": "Encrypted chats. An ASCII-armoured OpenPGP message." },
           "replyTo": { "type": ["integer", "null"] },
@@ -810,7 +842,7 @@
         "required": ["chatId"],
         "additionalProperties": false,
         "properties": {
-          "chatId": { "type": "integer" },
+          "chatId": { "$ref": "#/components/schemas/ChatIdIn" },
           "text": { "type": "string", "maxLength": 4096 },
           "armored": { "type": "string", "maxLength": 131072 },
           "markup": { "oneOf": [ { "$ref": "#/components/schemas/InlineKeyboard" }, { "type": "null" } ], "description": "Omit to keep the buttons, `null` to remove them." }
@@ -833,7 +865,7 @@
         "type": "object",
         "required": ["id", "kind"],
         "properties": {
-          "id": { "type": "integer" },
+          "id": { "$ref": "#/components/schemas/ChatId" },
           "kind": { "type": "string", "enum": ["private", "group", "channel"] },
           "title": { "type": ["string", "null"], "description": "Groups and channels." },
           "username": { "type": ["string", "null"], "description": "Public groups and channels." }
@@ -843,7 +875,7 @@
         "type": "object",
         "description": "As much as a bot may know about a person: id, handle, name. Never a phone number.",
         "properties": {
-          "id": { "type": "integer" },
+          "id": { "$ref": "#/components/schemas/UserId" },
           "username": { "type": ["string", "null"] },
           "firstName": { "type": ["string", "null"] },
           "lastName": { "type": ["string", "null"] },
@@ -937,7 +969,7 @@
         "required": ["kind", "id"],
         "properties": {
           "kind": { "type": "string", "enum": ["user", "group", "channel"] },
-          "id": { "type": "integer", "description": "The user id, or the chat id." },
+          "id": { "type": "string", "pattern": "^[BGC]?\\d{8}$", "description": "The person's or bot's id, or the group's (`G…`) or channel's (`C…`)." },
           "username": { "type": ["string", "null"], "description": "The handle it actually goes by. A person who answers to several returns their main one, not the one you asked with." },
           "user": { "allOf": [ { "$ref": "#/components/schemas/UserRef" } ], "description": "Set when `kind` is `user`, with `hasKey` alongside. Null otherwise." },
           "chat": { "allOf": [ { "$ref": "#/components/schemas/ChatCard" } ], "description": "Set when `kind` is `group` or `channel`. Null otherwise." }
@@ -946,7 +978,7 @@
       "UserKey": {
         "type": "object",
         "properties": {
-          "userId": { "type": "integer" },
+          "userId": { "$ref": "#/components/schemas/UserId" },
           "fingerprint": { "type": ["string", "null"] },
           "publicKey": { "type": "string", "description": "ASCII-armoured OpenPGP public key." }
         }

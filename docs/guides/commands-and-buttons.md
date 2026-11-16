@@ -57,7 +57,7 @@ await bot.delete_commands(scope="private")
 | `private` | in private chats |
 | `groups` | in groups |
 | `groupAdmins` | to group administrators |
-| `chat:<id>` | in one chat |
+| `chat:<id>` | in one group or channel: `chat:G48213907` |
 
 The app picks the narrowest scope that has commands: in a private chat `private`, then
 `default`; in a group `chat:<id>`, then `groupAdmins` (for admins), then `groups`, then

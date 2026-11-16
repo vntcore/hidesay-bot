@@ -221,7 +221,7 @@ class Call(Generic[T]):
     # what the rate limiter needs to know
     send: bool = False
     edit: bool = False
-    chat_id: int | None = None
+    chat_id: str | None = None
     chat_kind: ChatKind | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 

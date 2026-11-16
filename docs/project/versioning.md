@@ -32,7 +32,7 @@ Pin the minor version: `hidesay-bot>=0.2,<0.3`.
 
 ## Following the server
 
-The library follows the Bot API version in the server's OpenAPI document (1.0.0 today).
+The library follows the Bot API version in the server's OpenAPI document (2.0.0 today).
 
 - New fields from the server don't break old versions of the library: they stay in `raw`, and
   unknown enum values become pseudo-members.

@@ -16,7 +16,7 @@ from hidesay_bot import Bot
 from hidesay_bot import filters as f
 
 bot = Bot()
-notes: dict[int, list[str]] = defaultdict(list)
+notes: dict[str, list[str]] = defaultdict(list)
 
 
 @bot.command("notes", filters=(f.private,))

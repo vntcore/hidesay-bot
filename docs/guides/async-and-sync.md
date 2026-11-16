@@ -65,7 +65,7 @@ handler or from any other thread; `run()` returns once the running handlers are 
 ```python
 async def main():
     async with Bot() as bot:          # starts the bot without polling: sends work
-        await bot.send_message(7781, "The bot is up")
+        await bot.send_message("48213907", "The bot is up")
         ...
 
 
@@ -112,8 +112,8 @@ await bot.process_update({
     "updateId": 1,
     "kind": "message",
     "message": {
-        "id": 10, "chat": {"id": 55, "kind": "private"},
-        "from": {"id": 55, "username": "anna"},
+        "id": 10, "chat": {"id": "48213907", "kind": "private"},
+        "from": {"id": "48213907", "username": "anna"},
         "date": 1791462000000, "kind": "user", "text": "/start",
     },
 })

@@ -95,8 +95,8 @@ async def private_only(message): ...
 | `f.text("yes", "no", ignore_case=True)` | the whole text is one of these (spaces at the ends are ignored) |
 | `f.regex(r"^order (\d+)$")` | the text (or a button's data) matches; the handler can ask for `match` |
 | `f.command("start", "help")` | a command; the handler can ask for `command`. With no names, any command |
-| `f.user(42, "@anna")` | from one of these people, by ID or handle |
-| `f.chat(7781, "@news")` | in one of these chats, by ID or public handle |
+| `f.user("48213907", "@anna")` | from one of these people, by ID or handle. A string shaped like an ID is only the ID, never a handle made to look like it |
+| `f.chat("G48213907", "@news")` | in one of these chats, by ID or public handle |
 | `f.callback_data("yes", "no", prefix="vote:")` | a button press with this data |
 
 The keyword shortcuts `private=True`, `group=True` and `channel=True` work on `on_message` and
@@ -168,6 +168,11 @@ async def remind(message, command, bot):
 A handler with `**kwargs` gets all of them.
 
 ## IDs: who wrote, and where
+
+An ID is a string. A person's is eight digits, `"48213907"`; a bot's, a group's and a
+channel's have a letter in front: `"B48213907"`, `"G48213907"`, `"C48213907"`. The private
+chat with somebody has that person's ID, so `bot.send_message(user.id, ...)` writes to them
+in the chat they have with the bot. People find their own ID on their profile in the app.
 
 Every event carries the two IDs a bot works with, so most of the time there is nothing to look
 up:

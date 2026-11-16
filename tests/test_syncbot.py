@@ -38,13 +38,13 @@ from hidesay_bot import (
 )
 
 from .conftest import FIXTURES, fixture_text
-from .fakeapi import MEDIA_ID, FakeAPI
+from .fakeapi import ANNA, CHAT, GROUP, MEDIA_ID, FakeAPI
 
 PHONE_TEXT = "Ciao dal telefono: è già sera 🌙\nseconda riga"
 ATTACHMENT = b"\xff\xd8\xffJPEGDATA"
 
 
-def key_row(user_id: int, fixture: str, fingerprint: str) -> dict[str, Any]:
+def key_row(user_id: str, fixture: str, fingerprint: str) -> dict[str, Any]:
     return {"userId": user_id, "fingerprint": fingerprint, "publicKey": fixture_text(fixture)}
 
 
@@ -133,7 +133,7 @@ def v6_key() -> BotKey:
 
 @pytest.fixture
 def anna_row(phone_key: PublicKey) -> dict[str, Any]:
-    return key_row(55, "phone_ed.pub.asc", phone_key.fingerprint)
+    return key_row(ANNA, "phone_ed.pub.asc", phone_key.fingerprint)
 
 
 def test_plain_handler_replies_from_a_hidesay_bot_handler_thread(fake, new_sync_bot):
@@ -155,7 +155,7 @@ def test_plain_handler_replies_from_a_hidesay_bot_handler_thread(fake, new_sync_
     assert isinstance(seen["sent"], SyncSentMessage)
     assert seen["sent"].text == "echo hi"
     [post] = posts(fake)
-    assert (post["chatId"], post["text"], post["replyTo"]) == (7, "echo hi", 4007)
+    assert (post["chatId"], post["text"], post["replyTo"]) == (CHAT, "echo hi", 4007)
 
 
 def test_plain_handler_message_can_answer_show_typing_and_delete_itself(fake, new_sync_bot):
@@ -170,13 +170,13 @@ def test_plain_handler_message_can_answer_show_typing_and_delete_itself(fake, ne
         results["deleted"] = message.delete()
 
     fake.push_message(7, "hi", message_id=4007)
-    fake.messages[4007] = {"id": 4007, "chatId": 7, "body": "hi"}
+    fake.messages[4007] = {"id": 4007, "chatId": CHAT, "body": "hi"}
     bot.process_update(last_update(fake))
 
     [post] = posts(fake)
     assert post["text"] == "without a quote"
     assert "replyTo" not in post
-    assert fake.calls("POST", "/bot/v1/chats/7/typing")[0]["json"] == {"typing": True}
+    assert fake.calls("POST", f"/bot/v1/chats/{CHAT}/typing")[0]["json"] == {"typing": True}
     assert 4007 not in fake.messages
     assert results["typing"] is True
     assert results["deleted"] is True
@@ -283,7 +283,7 @@ def test_callback_helpers_edit_keep_or_remove_buttons_and_send(fake, new_sync_bo
     fake.add_chat(7)
     bot = new_sync_bot()
     keyboard = InlineKeyboard.build([Button.callback("Yes", "yes"), Button.callback("No", "no")])
-    question = bot.send_message(7, "Pick one", markup=keyboard)
+    question = bot.send_message(CHAT, "Pick one", markup=keyboard)
     results: list[SyncSentMessage] = []
 
     @bot.on_callback_query(data="yes")
@@ -296,8 +296,8 @@ def test_callback_helpers_edit_keep_or_remove_buttons_and_send(fake, new_sync_bo
     bot.process_update(last_update(fake))
 
     kept, removed = fake.calls("PATCH", f"/bot/v1/messages/{question.id}")
-    assert kept["json"] == {"chatId": 7, "text": "Thinking it over"}
-    assert removed["json"] == {"chatId": 7, "text": "You picked yes", "markup": None}
+    assert kept["json"] == {"chatId": CHAT, "text": "Thinking it over"}
+    assert removed["json"] == {"chatId": CHAT, "text": "You picked yes", "markup": None}
     assert results[0].markup is not None
     assert results[1].markup is None
     assert posts(fake)[-1]["text"] == "Thanks"
@@ -307,7 +307,7 @@ def test_callback_helpers_edit_keep_or_remove_buttons_and_send(fake, new_sync_bo
 def test_plain_callback_handler_can_delete_the_message_under_the_button(fake, new_sync_bot):
     fake.add_chat(7)
     bot = new_sync_bot()
-    question = bot.send_message(7, "Pick one", markup=InlineKeyboard.build([Button.callback("Yes", "yes")]))
+    question = bot.send_message(CHAT, "Pick one", markup=InlineKeyboard.build([Button.callback("Yes", "yes")]))
 
     @bot.on_callback_query()
     def remove(query):
@@ -322,14 +322,14 @@ def test_plain_callback_handler_can_delete_the_message_under_the_button(fake, ne
 def test_sent_message_can_be_edited_and_deleted(fake, new_sync_bot):
     fake.add_chat(7)
     bot = new_sync_bot()
-    draft = bot.send_message(7, "draft")
+    draft = bot.send_message(CHAT, "draft")
 
     final = draft.edit("final")
     plain = final.edit(markup=None)
 
     first, second = fake.calls("PATCH", f"/bot/v1/messages/{draft.id}")
-    assert first["json"] == {"chatId": 7, "text": "final"}
-    assert second["json"] == {"chatId": 7, "markup": None}
+    assert first["json"] == {"chatId": CHAT, "text": "final"}
+    assert second["json"] == {"chatId": CHAT, "markup": None}
     assert plain.markup is None
     assert isinstance(final, SyncSentMessage)
     assert final.text == "final"
@@ -543,7 +543,7 @@ def test_send_into_a_protected_private_chat_is_sealed_and_signed(fake, new_sync_
     fake.add_chat(7, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
 
-    sent = bot.send_message(7, "the forecast says rain")
+    sent = bot.send_message(CHAT, "the forecast says rain")
 
     [post] = posts(fake)
     assert "text" not in post
@@ -570,7 +570,7 @@ def test_reply_in_a_protected_group_is_sealed_to_its_members(fake, new_sync_bot,
     assert "replyTo" not in post
     assert phone_secret.decrypt(post["armored"]).text == "roger"
     # the armored body is only a hint (anyone in the group shapes it): the group is asked once
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == 1
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == 1
 
 
 @pytest.mark.parametrize(
@@ -583,7 +583,7 @@ def test_open_chat_refuses_a_message_that_must_be_encrypted(fake, new_sync_bot, 
     bot = new_sync_bot(pgp_private_key=bot_key, **options)
 
     with pytest.raises(EncryptionRequiredError):
-        bot.send_message(7, "the vault code", **send_options)
+        bot.send_message(CHAT, "the vault code", **send_options)
     assert posts(fake) == []
 
 
@@ -600,7 +600,7 @@ def test_protected_chat_refuses_what_it_cannot_take(
     bot = new_sync_bot(pgp_private_key=bot_key if with_key else None)
 
     with pytest.raises(error):
-        bot.send_message(7, "hello", **send_options)
+        bot.send_message(CHAT, "hello", **send_options)
     assert posts(fake) == []
 
 
@@ -609,12 +609,12 @@ def test_chat_that_turned_protected_gets_a_sealed_resend_with_the_same_send_id(
 ):
     fake.add_chat(7, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
-    bot.get_chat(7)
+    bot.get_chat(CHAT)
     bot.get_me()
     # published from somewhere else (the console, another worker) while this bot's view is fresh
     fake.me["mode"] = "protected"
 
-    sent = bot.send_message(7, "still there?")
+    sent = bot.send_message(CHAT, "still there?")
 
     clear, sealed = posts(fake)
     assert clear["text"] == "still there?"
@@ -627,15 +627,15 @@ def test_chat_that_turned_protected_gets_a_sealed_resend_with_the_same_send_id(
 def test_chat_that_turned_readable_is_never_sent_in_clear_on_its_own(fake, new_sync_bot, bot_key, anna_row):
     chat = fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
-    bot.send_message(900, "sealed hello")
+    bot.send_message(GROUP, "sealed hello")
     chat.history_visible = True
 
     with pytest.raises(WrongBodyKindError) as info:
-        bot.send_message(900, "secret plan")
+        bot.send_message(GROUP, "secret plan")
 
     assert info.value.expected == "text"
     assert all("text" not in p for p in posts(fake))
-    assert bot.send_message(900, "hello in clear").text == "hello in clear"
+    assert bot.send_message(GROUP, "hello in clear").text == "hello in clear"
 
 
 def test_edit_in_a_chat_that_turned_protected_is_sealed_and_sent_again(
@@ -643,13 +643,13 @@ def test_edit_in_a_chat_that_turned_protected_is_sealed_and_sent_again(
 ):
     fake.add_chat(7, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
-    draft = bot.send_message(7, "draft")
+    draft = bot.send_message(CHAT, "draft")
     fake.me["mode"] = "protected"
 
     final = draft.edit("final words")
 
     clear, sealed = fake.calls("PATCH", f"/bot/v1/messages/{draft.id}")
-    assert clear["json"] == {"chatId": 7, "text": "final words"}
+    assert clear["json"] == {"chatId": CHAT, "text": "final words"}
     assert phone_secret.decrypt(sealed["json"]["armored"]).text == "final words"
     assert final.encrypted
 
@@ -657,7 +657,7 @@ def test_edit_in_a_chat_that_turned_protected_is_sealed_and_sent_again(
 def test_edit_in_a_chat_that_turned_readable_is_not_resent_in_clear(fake, new_sync_bot, bot_key, anna_row):
     chat = fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
-    draft = bot.send_message(900, "sealed draft")
+    draft = bot.send_message(GROUP, "sealed draft")
     chat.history_visible = True
 
     with pytest.raises(WrongBodyKindError):
@@ -671,8 +671,8 @@ def test_seal_encrypts_for_the_chat_without_sending(fake, new_sync_bot, bot_key,
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
 
-    assert [key.fingerprint for key in bot.recipients(900)] == [phone_key.fingerprint]
-    assert phone_secret.decrypt(bot.seal(900, "for later")).text == "for later"
+    assert [key.fingerprint for key in bot.recipients(GROUP)] == [phone_key.fingerprint]
+    assert phone_secret.decrypt(bot.seal(GROUP, "for later")).text == "for later"
     assert posts(fake) == []
 
 
@@ -681,14 +681,14 @@ def test_chat_that_turned_readable_before_its_keys_were_fetched_takes_text_on_th
 ):
     chat = fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
-    bot.get_chat(900)
+    bot.get_chat(GROUP)
     chat.history_visible = True
 
     with pytest.raises(BadRequestError):
-        bot.send_message(900, "first try")
+        bot.send_message(GROUP, "first try")
     assert posts(fake) == []
 
-    assert bot.send_message(900, "second try").text == "second try"
+    assert bot.send_message(GROUP, "second try").text == "second try"
 
 
 def test_changed_key_stops_sends_until_it_is_trusted(
@@ -697,16 +697,16 @@ def test_changed_key_stops_sends_until_it_is_trusted(
     fake.me["mode"] = "protected"
     chat = fake.add_chat(7, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key, pin_keys=True, cache_ttl=0)
-    bot.send_message(7, "first")
-    assert bot.storage.get_pin(55) == phone_key.fingerprint
-    chat.keys = [key_row(55, "phone_rsa.pub.asc", rsa_phone_key.fingerprint)]
+    bot.send_message(CHAT, "first")
+    assert bot.storage.get_pin(ANNA) == phone_key.fingerprint
+    chat.keys = [key_row(ANNA, "phone_rsa.pub.asc", rsa_phone_key.fingerprint)]
 
     with pytest.raises(KeyChangedError) as info:
-        bot.send_message(7, "second")
+        bot.send_message(CHAT, "second")
 
     assert (info.value.pinned, info.value.current) == (phone_key.fingerprint, rsa_phone_key.fingerprint)
-    bot.trust_key(55, rsa_phone_key.fingerprint)
-    bot.send_message(7, "third")
+    bot.trust_key(ANNA, rsa_phone_key.fingerprint)
+    bot.send_message(CHAT, "third")
     assert rsa_secret.decrypt(posts(fake)[-1]["armored"]).text == "third"
     assert len(posts(fake)) == 2
 
@@ -780,7 +780,7 @@ def test_publish_key_puts_the_key_and_seals_private_chats_from_then_on(
 ):
     fake.add_chat(7, keys=[anna_row])
     bot = new_sync_bot(pgp_private_key=bot_key)
-    bot.get_chat(7)
+    bot.get_chat(CHAT)
 
     result = bot.publish_key()
 
@@ -788,7 +788,7 @@ def test_publish_key_puts_the_key_and_seals_private_chats_from_then_on(
     assert put["json"] == {"publicKey": bot_key.export_public(), "fingerprint": bot_key.fingerprint}
     assert (result.fingerprint, result.mode) == (bot_key.fingerprint, ChatMode.PROTECTED)
     assert bot.me.protected
-    bot.send_message(7, "sealed from now on")
+    bot.send_message(CHAT, "sealed from now on")
     [post] = posts(fake)
     assert phone_secret.decrypt(post["armored"]).text == "sealed from now on"
 
@@ -796,11 +796,11 @@ def test_publish_key_puts_the_key_and_seals_private_chats_from_then_on(
 def test_get_chat_reports_private_chats_protected_after_publish_key(fake, new_sync_bot, bot_key):
     fake.add_chat(7)
     bot = new_sync_bot(pgp_private_key=bot_key)
-    assert bot.get_chat(7).mode == ChatMode.OPEN
+    assert bot.get_chat(CHAT).mode == ChatMode.OPEN
 
     bot.publish_key()
 
-    assert bot.get_chat(7).mode == ChatMode.PROTECTED
+    assert bot.get_chat(CHAT).mode == ChatMode.PROTECTED
 
 
 def test_publish_key_without_any_key_is_a_configuration_error(fake, new_sync_bot):
@@ -839,11 +839,11 @@ def test_get_chat_is_cached_and_leave_chat_forgets_it(fake, new_sync_bot):
     fake.add_chat(900, "group", title="Team", history_visible=True)
     bot = new_sync_bot()
 
-    assert bot.get_chat(900) is bot.get_chat(900)
-    assert bot.leave_chat(900) is True
+    assert bot.get_chat(GROUP) is bot.get_chat(GROUP)
+    assert bot.leave_chat(GROUP) is True
     with pytest.raises(ChatNotFoundError):
-        bot.get_chat(900)
-    assert len(fake.calls("GET", "/bot/v1/chats/900")) == 2
+        bot.get_chat(GROUP)
+    assert len(fake.calls("GET", f"/bot/v1/chats/{GROUP}")) == 2
 
 
 def test_get_me_is_kept_until_refreshed_and_commands_sync(fake, new_sync_bot):
@@ -863,17 +863,17 @@ def test_get_me_is_kept_until_refreshed_and_commands_sync(fake, new_sync_bot):
 
 
 def test_api_helpers_work_without_await(fake, new_sync_bot, anna_row, phone_key):
-    anna = {"id": 55, "username": "anna", "firstName": "Anna", "isBot": False}
+    anna = {"id": ANNA, "username": "anna", "firstName": "Anna", "isBot": False}
     members = [{"user": anna, "status": "member", "rights": 255}]
     fake.add_chat(900, "group", title="Team", history_visible=False, keys=[anna_row], members=members)
-    fake.user_keys[55] = anna_row
+    fake.user_keys[ANNA] = anna_row
     bot = new_sync_bot()
 
-    assert [k.user_id for k in bot.get_chat_keys(900).keys] == [55]
-    assert [m.user.id for m in bot.get_chat_members(900).members] == [55]
-    assert bot.get_chat_member(900, 55).is_inside
-    assert bot.get_user_key(55).fingerprint == phone_key.fingerprint
-    assert bot.send_typing(900) is True
+    assert [k.user_id for k in bot.get_chat_keys(GROUP).keys] == [ANNA]
+    assert [m.user.id for m in bot.get_chat_members(GROUP).members] == [ANNA]
+    assert bot.get_chat_member(GROUP, ANNA).is_inside
+    assert bot.get_user_key(ANNA).fingerprint == phone_key.fingerprint
+    assert bot.send_typing(GROUP) is True
 
     bot.set_commands([("start", "Say hello")])
     assert [c.command for c in bot.get_commands("default")] == ["start"]

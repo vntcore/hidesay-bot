@@ -196,7 +196,7 @@ For a script that only needs to send one message:
 from hidesay_bot import Client
 
 with Client() as api:
-    api.send_message(7781, "Last night's backup finished fine.")
+    api.send_message("48213907", "Last night's backup finished fine.")
 ```
 
 ## Documentation

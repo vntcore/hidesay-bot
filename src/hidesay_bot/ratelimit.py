@@ -123,7 +123,7 @@ class RateLimiter:
         for key in [k for k, until in self._blocked_until.items() if until <= now]:
             del self._blocked_until[key]
 
-    def _plan(self, *, send: bool, edit: bool, chat_id: int | None, chat_kind: ChatKind | None) -> float:
+    def _plan(self, *, send: bool, edit: bool, chat_id: str | None, chat_kind: ChatKind | None) -> float:
         """Books the call and returns 0, or books nothing and returns the seconds to wait."""
         with self._lock:
             now = self._clock()
@@ -156,7 +156,7 @@ class RateLimiter:
                 taken.append(key)
             return 0.0
 
-    def penalize(self, seconds: float, *, chat_id: int | None = None, edit: bool = False, calls: bool = False) -> None:
+    def penalize(self, seconds: float, *, chat_id: str | None = None, edit: bool = False, calls: bool = False) -> None:
         """Keeps a window shut for ``seconds``, after the server answered ``429`` anyway.
 
         A ``429`` can still come, for example when another process uses the same token. The
@@ -190,7 +190,7 @@ class RateLimiter:
         *,
         send: bool = False,
         edit: bool = False,
-        chat_id: int | None = None,
+        chat_id: str | None = None,
         chat_kind: ChatKind | None = None,
     ) -> float:
         """Blocks the calling thread until the call may go, then books it.
@@ -220,7 +220,7 @@ class RateLimiter:
         *,
         send: bool = False,
         edit: bool = False,
-        chat_id: int | None = None,
+        chat_id: str | None = None,
         chat_kind: ChatKind | None = None,
     ) -> float:
         """Waits, without blocking the event loop, until the call may go, then books it.

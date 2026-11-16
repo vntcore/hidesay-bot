@@ -31,9 +31,9 @@ Everything public here is also importable from ``hidesay_bot``.
 
 Example:
     >>> from hidesay_bot import User
-    >>> anna = User.from_json({"id": 55, "username": "anna", "someNewField": 1})
+    >>> anna = User.from_json({"id": "48213907", "username": "anna", "someNewField": 1})
     >>> anna
-    User(id=55, username='anna', first_name=None, last_name=None, is_bot=False)
+    User(id='48213907', username='anna', first_name=None, last_name=None, is_bot=False)
     >>> anna.raw["someNewField"]
     1
 """
@@ -294,6 +294,16 @@ def _req_int(data: Mapping[str, Any], key: str, where: str) -> int:
     return value
 
 
+def _req_id(data: Mapping[str, Any], key: str, where: str) -> str:
+    value = data.get(key)
+    # ids are strings with their letter ("G48213907"); a bare number can only be a person
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, str) and value:
+        return value
+    raise PayloadError(f"{where}.{key}: expected an id, got {value!r}")
+
+
 def _int(data: Mapping[str, Any], key: str) -> int | None:
     value = data.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -356,19 +366,19 @@ class User(_Model):
     """Somebody as a bot may know them: an ID, a handle and a name. Never a phone number.
 
     Attributes:
-        id: The user's ID.
+        id: The user's ID, eight digits: ``"48213907"``, or ``"B48213907"`` for a bot.
         username: Their handle, without ``@``, or ``None`` if they have none.
         first_name: Their first name, or ``None``.
         last_name: Their last name, or ``None``.
         is_bot: ``True`` for a bot.
 
     Example:
-        >>> anna = User.from_json({"id": 55, "username": "anna", "firstName": "Anna"})
+        >>> anna = User.from_json({"id": "48213907", "username": "anna", "firstName": "Anna"})
         >>> anna.full_name, anna.mention
         ('Anna', '@anna')
     """
 
-    id: int
+    id: str
     username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -400,11 +410,11 @@ class User(_Model):
             The user, with ``data`` kept in ``raw``.
 
         Raises:
-            PayloadError: ``data`` is not an object, or its ``id`` is missing or not an integer.
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
         """
         d = _obj(data, "user")
         return cls(
-            id=_req_int(d, "id", "user"),
+            id=_req_id(d, "id", "user"),
             username=_str(d, "username"),
             first_name=_str(d, "firstName"),
             last_name=_str(d, "lastName"),
@@ -443,11 +453,11 @@ class ChatPeer(User):
             The person, with ``data`` kept in ``raw``.
 
         Raises:
-            PayloadError: ``data`` is not an object, or its ``id`` is missing or not an integer.
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
         """
         d = _obj(data, where)
         return cls(
-            id=_req_int(d, "id", where),
+            id=_req_id(d, "id", where),
             username=_str(d, "username"),
             first_name=_str(d, "firstName"),
             last_name=_str(d, "lastName"),
@@ -466,14 +476,15 @@ class ChatRef(_Model):
     passed as it is.
 
     Attributes:
-        id: The chat's ID.
+        id: The chat's ID: ``"G48213907"`` a group, ``"C48213907"`` a channel, and in a
+            private chat the other person's ID, the same as ``from_user.id``.
         kind: Private chat, group or channel.
         title: The name of a group or channel. ``None`` in a private chat.
         username: The public handle of a group or channel, without ``@``. ``None`` in a private
             chat, and for a group or channel that has none.
     """
 
-    id: int
+    id: str
     kind: ChatKind
     title: str | None = None
     username: str | None = None
@@ -504,11 +515,11 @@ class ChatRef(_Model):
             The chat, with ``data`` kept in ``raw``. A missing ``kind`` is read as ``"private"``.
 
         Raises:
-            PayloadError: ``data`` is not an object, or its ``id`` is missing or not an integer.
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
         """
         d = _obj(data, "chat")
         return cls(
-            id=_req_int(d, "id", "chat"),
+            id=_req_id(d, "id", "chat"),
             kind=ChatKind(_str(d, "kind") or "private"),
             title=_str(d, "title"),
             username=_str(d, "username"),
@@ -730,7 +741,7 @@ class Chat(ChatRef):
         blocked = d.get("blocked")
         history = d.get("historyVisible")
         return cls(
-            id=_req_int(d, "id", "chat"),
+            id=_req_id(d, "id", "chat"),
             kind=ChatKind(_str(d, "kind") or "private"),
             title=_str(d, "title"),
             username=_str(d, "username"),
@@ -780,12 +791,12 @@ class ChatCard(ChatRef):
             The card, with ``data`` kept in ``raw``.
 
         Raises:
-            PayloadError: ``data`` is not an object, or its ``id`` is missing or not an integer.
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
         """
         d = _obj(data, "resolved.chat")
         history = d.get("historyVisible")
         return cls(
-            id=_req_int(d, "id", "resolved.chat"),
+            id=_req_id(d, "id", "resolved.chat"),
             kind=ChatKind(_str(d, "kind") or "group"),
             title=_str(d, "title"),
             username=_str(d, "username"),
@@ -829,14 +840,14 @@ class Resolved(_Model):
         chat: The group or channel, when `kind` is ``group`` or ``channel``. ``None`` otherwise.
 
     Example:
-        >>> found = Resolved.from_json({"kind": "user", "id": 55, "username": "anna",
-        ...                             "user": {"id": 55, "username": "anna"}})
+        >>> found = Resolved.from_json({"kind": "user", "id": "48213907", "username": "anna",
+        ...                             "user": {"id": "48213907", "username": "anna"}})
         >>> found.id, found.is_user, found.chat
-        (55, True, None)
+        ('48213907', True, None)
     """
 
     kind: HandleKind
-    id: int
+    id: str
     username: str | None = None
     user: ChatPeer | None = None
     chat: ChatCard | None = None
@@ -868,14 +879,14 @@ class Resolved(_Model):
             ``"user"``, which is what a bare ``user`` object means.
 
         Raises:
-            PayloadError: ``data`` is not an object, or its ``id`` is missing or not an integer.
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
         """
         d = _obj(data, "resolved")
         user = d.get("user")
         chat = d.get("chat")
         return cls(
             kind=HandleKind(_str(d, "kind") or "user"),
-            id=_req_int(d, "id", "resolved"),
+            id=_req_id(d, "id", "resolved"),
             username=_str(d, "username"),
             user=ChatPeer.from_json(user, "resolved.user") if isinstance(user, Mapping) else None,
             chat=ChatCard.from_json(chat) if isinstance(chat, Mapping) else None,
@@ -904,7 +915,7 @@ class UserKey(_Model):
         place of a person's. ``Bot(pin_keys=True)`` notices when a person's key changes.
     """
 
-    user_id: int
+    user_id: str
     fingerprint: str | None
     public_key: str
 
@@ -920,14 +931,14 @@ class UserKey(_Model):
 
         Raises:
             PayloadError: ``data`` is not an object, its ``publicKey`` is missing, or its
-                ``userId`` is missing or not an integer.
+                ``userId`` is missing.
         """
         d = _obj(data, "key")
         public_key = _str(d, "publicKey")
         if public_key is None:
             raise PayloadError("key.publicKey: missing")
         return cls(
-            user_id=_req_int(d, "userId", "key"), fingerprint=_str(d, "fingerprint"), public_key=public_key, raw=d
+            user_id=_req_id(d, "userId", "key"), fingerprint=_str(d, "fingerprint"), public_key=public_key, raw=d
         )
 
 
@@ -1199,7 +1210,7 @@ class BotInfo(_Model):
     while the bot is paused, so it is the way to find out why nothing else does.
 
     Attributes:
-        id: The bot's user ID.
+        id: The bot's ID, with its letter: ``"B48213907"``.
         username: Its handle, without ``@``. It ends in ``bot``.
         name: Its display name.
         about: The one line under the name on its profile, or ``None``.
@@ -1224,7 +1235,7 @@ class BotInfo(_Model):
                 report = report[: me.limits.text_max - 3] + "..."
     """
 
-    id: int
+    id: str
     username: str
     name: str
     about: str | None = None
@@ -1263,11 +1274,11 @@ class BotInfo(_Model):
             ``"protected"`` when ``fingerprint`` is set, ``"open"`` otherwise.
 
         Raises:
-            PayloadError: ``data`` is not an object, or its ``id`` is missing or not an integer.
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
         """
         d = _obj(data, "me")
         return cls(
-            id=_req_int(d, "id", "me"),
+            id=_req_id(d, "id", "me"),
             username=_str(d, "username") or "",
             name=_str(d, "name") or "",
             about=_str(d, "about"),
@@ -1402,7 +1413,7 @@ class CommandScope(_Model):
 
     Attributes:
         scope: ``"default"``, ``"private"``, ``"groups"``, ``"groupAdmins"``, or
-            ``"chat:<id>"`` for one chat.
+            ``"chat:<id>"`` (``"chat:G48213907"``) for one chat.
         commands: The commands of the menu.
     """
 
@@ -1599,13 +1610,13 @@ class MessageBase(_Model):
     Example:
         >>> message = MessageBase.from_json({
         ...     "id": 1834,
-        ...     "chat": {"id": 7781, "kind": "private"},
-        ...     "from": {"id": 55, "username": "anna"},
+        ...     "chat": {"id": "48213907", "kind": "private"},
+        ...     "from": {"id": "48213907", "username": "anna"},
         ...     "date": 1767225600000,
         ...     "text": "/weather rome",
         ... })
         >>> message.chat_id, message.from_user.mention, message.is_command
-        (7781, '@anna', True)
+        ('48213907', '@anna', True)
         >>> message.date.isoformat()
         '2026-01-01T00:00:00+00:00'
 
@@ -1636,7 +1647,7 @@ class MessageBase(_Model):
         return self.armored is not None
 
     @property
-    def chat_id(self) -> int:
+    def chat_id(self) -> str:
         """The ID of the chat, the same as ``message.chat.id``."""
         return self.chat.id
 
@@ -1948,13 +1959,13 @@ class Update(_Model):
         >>> update = Update.from_json({
         ...     "updateId": 412,
         ...     "kind": "deleted_messages",
-        ...     "chat": {"id": 7781, "kind": "private"},
+        ...     "chat": {"id": "48213907", "kind": "private"},
         ...     "messageIds": [1834, 1835],
         ... })
         >>> update.kind
         <UpdateKind.DELETED_MESSAGES: 'deleted_messages'>
         >>> update.deleted.message_ids, update.chat.id, update.message
-        ((1834, 1835), 7781, None)
+        ((1834, 1835), '48213907', None)
     """
 
     update_id: int

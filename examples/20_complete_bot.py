@@ -2,7 +2,7 @@
 storage, encryption when a key is configured, and a clean way to stop.
 
     export HIDESAY_BOT_TOKEN="pgpbot_..."
-    export ADMIN_ID=55
+    export ADMIN_ID=48213907
     # optional, for end-to-end encrypted private chats:
     export HIDESAY_BOT_KEY_FILE=bot-key.asc HIDESAY_BOT_KEY_PASSPHRASE="..."
     python examples/20_complete_bot.py
@@ -22,7 +22,7 @@ from hidesay_bot import filters as f
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("todo")
 
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+ADMIN_ID = os.environ.get("ADMIN_ID", "")  # not set: nobody is admin
 DB = os.environ.get("TODO_DB", "todo.db")
 
 bot = Bot(storage=SQLiteStorage(os.environ.get("BOT_DB", "todo-bot.db")))
@@ -35,16 +35,16 @@ admin = Router(name="admin")
 
 def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB)
-    conn.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, chat INTEGER, text TEXT, done INTEGER)")
+    conn.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, chat TEXT, text TEXT, done INTEGER)")
     return conn
 
 
-def items_of(chat_id: int) -> list[tuple[int, str, int]]:
+def items_of(chat_id: str) -> list[tuple[int, str, int]]:
     with closing(db()) as conn:
         return conn.execute("SELECT id, text, done FROM items WHERE chat = ? ORDER BY id", (chat_id,)).fetchall()
 
 
-def keyboard_for(chat_id: int) -> InlineKeyboard | None:
+def keyboard_for(chat_id: str) -> InlineKeyboard | None:
     rows = [
         [Button.callback(("✅ " if done else "⬜ ") + text[:40], f"toggle:{item_id}")]
         for item_id, text, done in items_of(chat_id)[:20]
