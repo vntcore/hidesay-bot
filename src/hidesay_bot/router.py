@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
-from .filters import Filter, as_filter, callback_data, command, regex
+from .filters import Filter, as_filter, callback_data, command, reaction, regex
 from .filters import channel as _channel
 from .filters import group as _group
 from .filters import private as _private
@@ -518,8 +518,12 @@ class Router:
     def on_chat_member(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
         """Registers a handler for changes to the bot's own place in a chat.
 
-        The bot was added, promoted, restricted or removed, or a person blocked or unblocked
-        it. The handler gets a `ChatMemberUpdate`.
+        The bot was added, promoted, restricted, let read every message or stopped, or
+        removed, or a person blocked or unblocked it. The handler gets a `ChatMemberUpdate`.
+        When the bot is added to a group or channel, ``change.chat`` is the whole room and
+        ``change.new.reads_all`` is ``False``: the room lets a new bot read only what is meant
+        for it. If the bot needs every message, that is the moment to say so in the room, and
+        why; an admin allows it from the bot's entry in the member list.
 
         Args:
             *filters: Filters that must all match.
@@ -529,14 +533,146 @@ class Router:
             A decorator that registers the function and gives it back unchanged.
 
         Example:
-            A thank-you when the bot is added::
+            A thank-you when the bot is added, and a word when the room lets it read
+            everything::
 
                 @bot.on_chat_member()
                 async def membership(change):
                     if change.joined:
                         await bot.send_message(change.chat, "Thanks for adding me.")
+                    elif change.reads_all_changed and change.reads_all:
+                        await bot.send_message(change.chat, "Thanks: I keep the minutes from now on.")
         """
         return self._add(UpdateKind.MY_CHAT_MEMBER, filters, priority)
+
+    def on_member_update(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
+        """Registers a handler for changes to somebody else's place in a group or channel.
+
+        Somebody joined, left, was removed, banned, promoted or restricted. The handler gets a
+        `ChatMemberUpdate` whose ``user`` is whose seat it is. Only about people the bot would
+        see on the member list: where it is hidden, a bot that is not an admin hears only about
+        the admins.
+
+        Args:
+            *filters: Filters that must all match. ``f.user(...)`` looks at who made the
+                change, not whose seat it is.
+            priority: Handlers with a higher number are tried first within this router.
+
+        Returns:
+            A decorator that registers the function and gives it back unchanged.
+
+        Example:
+            Greet whoever comes in::
+
+                @bot.on_member_update()
+                async def greet(change):
+                    if change.joined:
+                        await bot.send_message(change.chat, f"Welcome, {change.user.full_name}!")
+        """
+        return self._add(UpdateKind.CHAT_MEMBER, filters, priority)
+
+    def on_comment(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
+        """Registers a handler for comments under a channel's posts.
+
+        A comment reaches the bot by the rule of a message: one under the bot's own post, one
+        that answers its comment, one that names it, or any comment when the channel lets the
+        bot read every message. The handler gets a `Message` whose ``thread_root`` is the post;
+        `Message.reply` answers under the same post. Comments never reach `on_message` or
+        `command` handlers.
+
+        Args:
+            *filters: Filters that must all match.
+            priority: Handlers with a higher number are tried first within this router.
+
+        Returns:
+            A decorator that registers the function and gives it back unchanged.
+
+        Example:
+            Thank whoever comments on the bot's posts::
+
+                @bot.on_comment()
+                async def thanks(comment):
+                    await comment.reply("Thanks for the comment!")
+        """
+        return self._add(UpdateKind.COMMENT, filters, priority)
+
+    def on_edited_comment(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
+        """Registers a handler for edits of comments the bot had received.
+
+        The handler gets the `Message` as it is now.
+
+        Args:
+            *filters: Filters that must all match.
+            priority: Handlers with a higher number are tried first within this router.
+
+        Returns:
+            A decorator that registers the function and gives it back unchanged.
+        """
+        return self._add(UpdateKind.EDITED_COMMENT, filters, priority)
+
+    def on_reaction(self, *filters: Any, emoji: str | None = None, priority: int = 0) -> Callable[[F], F]:
+        """Registers a handler for reactions: somebody put, changed or took back a reaction.
+
+        Only reactions on a message the bot was handed come through, its own included. The
+        handler gets a `ReactionUpdate`.
+
+        Args:
+            *filters: Filters that must all match.
+            emoji: Takes only the reactions put with this emoji. ``None`` takes every change,
+                reactions taken back included.
+            priority: Handlers with a higher number are tried first within this router.
+
+        Returns:
+            A decorator that registers the function and gives it back unchanged.
+
+        Example:
+            Count the votes under a poll::
+
+                @bot.on_reaction()
+                async def tally(reaction):
+                    votes[reaction.message_id] = reaction.counts
+        """
+        extra = (reaction(emoji),) if emoji is not None else ()
+        return self._add(UpdateKind.MESSAGE_REACTION, (*extra, *filters), priority)
+
+    def on_join_request(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
+        """Registers a handler for requests to join through a link that needs approval.
+
+        Only bots with the *add members* right get them. The handler gets a `JoinRequest`;
+        answer with `Bot.decide_join_request`.
+
+        Args:
+            *filters: Filters that must all match. ``f.user(...)`` looks at who asked.
+            priority: Handlers with a higher number are tried first within this router.
+
+        Returns:
+            A decorator that registers the function and gives it back unchanged.
+
+        Example:
+            Let in whoever has a handle::
+
+                @bot.on_join_request()
+                async def door(request):
+                    approve = request.from_user.username is not None
+                    await bot.decide_join_request(request.chat, request.from_user.id, approve)
+        """
+        return self._add(UpdateKind.JOIN_REQUEST, filters, priority)
+
+    def on_chat_updated(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
+        """Registers a handler for changes to a group or channel itself.
+
+        Its name, description, picture, a setting, the pins, the comment switches. The handler
+        gets a `ChatUpdated`, with the room as it is now and the names of what moved;
+        ``f.changed(...)`` picks some of them.
+
+        Args:
+            *filters: Filters that must all match.
+            priority: Handlers with a higher number are tried first within this router.
+
+        Returns:
+            A decorator that registers the function and gives it back unchanged.
+        """
+        return self._add(UpdateKind.CHAT_UPDATED, filters, priority)
 
     def on_update(self, *filters: Any, priority: int = 0) -> Callable[[F], F]:
         """Registers a handler for every update, of any kind.

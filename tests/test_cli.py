@@ -202,7 +202,7 @@ def test_whoami_describes_an_open_bot(server, capsys):
     assert capsys.readouterr().out.splitlines() == [
         "@testbot (id B10000412) - Test",
         "mode:     open",
-        "status:   active, privacy mode on",
+        "status:   active",
         "webhook:  none (polling)",
         "queued:   0 update(s)",
     ]
@@ -211,7 +211,7 @@ def test_whoami_describes_an_open_bot(server, capsys):
 
 
 def test_whoami_shows_the_published_key_the_webhook_and_the_queue(server, capsys, bot_key):
-    server.me.update(mode="protected", fingerprint=bot_key.fingerprint, privacyMode=False)
+    server.me.update(mode="protected", fingerprint=bot_key.fingerprint)
     server.webhook["url"] = "https://bot.example/hook"
     server.add_chat(7)
     server.push_message(7, "waiting")
@@ -220,10 +220,20 @@ def test_whoami_shows_the_published_key_the_webhook_and_the_queue(server, capsys
 
     assert capsys.readouterr().out.splitlines()[1:] == [
         f"mode:     protected, key {format_fingerprint(bot_key.fingerprint)}",
-        "status:   active, privacy mode off",
+        "status:   active",
         "webhook:  https://bot.example/hook",
         "queued:   1 update(s)",
     ]
+
+
+def test_whoami_lists_the_other_handles_the_bot_answers_to(server, capsys):
+    server.me["usernames"] = ["forecastbot", "meteobot"]
+
+    assert cli.main(["whoami"]) == 0
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[:2] == ["@testbot (id B10000412) - Test", "also:     @forecastbot, @meteobot"]
+    assert all("privacy" not in line for line in out)
 
 
 @pytest.mark.parametrize(

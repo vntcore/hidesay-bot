@@ -131,10 +131,12 @@ class RetryPolicy:
     Two kinds of failure are tried again, each with its own budget:
 
     - No answer, or a ``5xx`` (a `NetworkError` or a `ServerError`), for the calls that are
-      safe to repeat: every operation except ``get_updates`` and ``send_typing``. Sends are safe
-      because each carries a ``sendId``. The wait before retry ``n`` (``0`` for the first) is
-      random, between 0 and ``min(backoff_max, backoff_base * 2**n)`` seconds ("full jitter"),
-      so clients that failed together don't all come back at the same moment.
+      safe to repeat: every operation except ``get_updates``, ``send_typing``,
+      ``send_comment``, ``create_invite``, ``set_chat_photo``, ``delete_chat_photo``,
+      ``set_chat_banner`` and ``delete_chat_banner``. ``send_message`` and ``forward_message``
+      are safe because each carries a ``sendId``. The wait before retry ``n`` (``0`` for the
+      first) is random, between 0 and ``min(backoff_max, backoff_base * 2**n)`` seconds ("full
+      jitter"), so clients that failed together don't all come back at the same moment.
     - A ``429``, for any call, since the server refused it before doing anything. The client
       waits as long as the server asks (``retry_after``, or one second when it gives none),
       plus a fraction of a second.
@@ -211,6 +213,8 @@ class Call(Generic[T]):
     params: dict[str, Any] | None = None
     body: Any = None
     has_body: bool = False
+    # multipart/form-data instead of json: field -> (filename, bytes, content type)
+    files: dict[str, tuple[str, bytes, str]] | None = None
     # safe to send again after the first answer got lost (idempotent, or carries a sendId)
     repeatable: bool = True
     # codes that mean "already done" when they answer a repeat whose first try got lost
@@ -218,6 +222,8 @@ class Call(Generic[T]):
     done_value: Any = None
     # long polls need a read timeout longer than the poll itself
     read_timeout: float | None = None
+    # 50 MB going up a slow line takes longer than the default allows
+    write_timeout: float | None = None
     # what the rate limiter needs to know
     send: bool = False
     edit: bool = False

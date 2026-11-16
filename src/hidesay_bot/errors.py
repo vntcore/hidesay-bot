@@ -29,6 +29,7 @@ __all__ = [
     "APIError",
     "AuthenticationError",
     "BadMarkupError",
+    "BadMediaError",
     "BadRequestError",
     "BadWebhookError",
     "BlockedByUserError",
@@ -36,8 +37,12 @@ __all__ = [
     "CallbackAnsweredError",
     "CallbackExpiredError",
     "CallbackNotFoundError",
+    "ChatFullError",
     "ChatIsOpenError",
+    "ChatIsProtectedError",
+    "ChatIsPublicError",
     "ChatNotFoundError",
+    "CommentsClosedError",
     "ConfigurationError",
     "ConflictError",
     "CryptoError",
@@ -48,7 +53,10 @@ __all__ = [
     "FloodWaitError",
     "ForbiddenError",
     "InvalidKeyError",
+    "InviteNotFoundError",
+    "JoinRequestNotFoundError",
     "KeyChangedError",
+    "MediaIntegrityError",
     "MemberNotFoundError",
     "MessageNotFoundError",
     "NetworkError",
@@ -62,11 +70,13 @@ __all__ = [
     "PollingConflictError",
     "PollingError",
     "RateLimitError",
+    "ReadsAllNeededError",
     "RequestTimeoutError",
     "SendIdConflictError",
     "ServerError",
     "SignatureError",
     "SlowModeError",
+    "StickerNotFoundError",
     "StorageError",
     "UnexpectedResponseError",
     "UserGoneError",
@@ -303,10 +313,31 @@ class ChatIsOpenError(BadRequestError):
     """
 
 
-class PayloadTooLargeError(APIError):
-    """413 ``too_large``: the request body was over 256 KiB.
+class BadMediaError(BadRequestError):
+    """400 ``bad_media``: the files of a send can't make a message.
 
-    Retrying the same body fails the same way.
+    An ID that is not a file this bot uploaded with ``POST /attachments``, a description that
+    breaks a rule the client could not check, or an album with something in it that is not a
+    picture or a clip. `Bot.send_media` uploads and describes the files itself, so it only
+    meets this when the server changed its rules. Retrying the same send fails the same way.
+    """
+
+
+class ChatIsProtectedError(BadRequestError):
+    """400 ``chat_is_protected``: the server can't forward this message itself.
+
+    The message comes from, or goes into, an end-to-end encrypted chat, so it has to be opened
+    and sealed again by whoever holds the key: the bot. `Bot.forward_message` does that on its
+    own when the server says so; `AsyncClient.forward_message` raises this.
+    """
+
+
+class PayloadTooLargeError(APIError):
+    """413 ``too_large``: more than the server takes in one request.
+
+    A JSON body over 256 KiB, a file over the upload limit (50 MB, `Limits.upload_bytes_max`)
+    or a chat picture over the server's limit for pictures. Retrying the same body fails the
+    same way.
     """
 
 
@@ -354,6 +385,24 @@ class UserGoneError(ForbiddenError):
     """
 
 
+class ReadsAllNeededError(ForbiddenError):
+    """403 ``reads_all_needed``: only a bot the room lets read every message may do this.
+
+    Marking a group or channel read (`Bot.read_chat`) is one such thing: a bot that only gets
+    what is meant for it would show up as having read people it never saw. The room's admins
+    decide in the app whether the bot reads everything (`Seat.reads_all`); the bot can't ask
+    for it through the API. Retrying fails the same way until they let it.
+    """
+
+
+class CommentsClosedError(ForbiddenError):
+    """403 ``comments_closed``: the channel takes no comments, or not under this post.
+
+    The channel's comments are off, or this post's were closed. Retrying fails the same way
+    until an admin opens them again.
+    """
+
+
 class NotFoundError(APIError):
     """404: something named in the request does not exist, or is not the bot's to see.
 
@@ -397,10 +446,11 @@ class MemberNotFoundError(NotFoundError):
 
 
 class UserNotFoundError(NotFoundError):
-    """404 ``user_not_found``: no such person, or nobody the bot shares a chat with.
+    """404 ``user_not_found``: no such person, or nobody the bot may look up.
 
-    The bot can only look up people it shares a chat with. For anybody else the server answers
-    this, whether or not they exist.
+    The bot can only look up people it has a private chat with, people a room's member list shows
+    it, and people whose words in a room reached it. For anybody else the server answers this,
+    whether or not they exist.
     """
 
 
@@ -422,6 +472,32 @@ class NoUserKeyError(NotFoundError):
 
 class CallbackNotFoundError(NotFoundError):
     """404 ``callback_not_found``: no such button press for this bot."""
+
+
+class StickerNotFoundError(NotFoundError):
+    """404 ``sticker_not_found``: no such sticker, or one the bot may not send.
+
+    A bot sends stickers of public packs, and any other sticker it was shown, with the file ID
+    a message carried (``media_id``) as proof. Without the proof a private pack's sticker looks
+    exactly like one that doesn't exist.
+    """
+
+
+class InviteNotFoundError(NotFoundError):
+    """404 ``invite_not_found``: no such invite link in that chat, or it was revoked already.
+
+    When a revoke timed out and the retry gets this answer, the first try worked, and the
+    client returns ``True`` instead of raising.
+    """
+
+
+class JoinRequestNotFoundError(NotFoundError):
+    """404 ``request_not_found``: that person has no request to join waiting.
+
+    A bot lets in only somebody who asked through a link that needs approval: it is never a
+    way round a person's "don't add me to groups". The request may also have been decided
+    already, by an admin or another bot.
+    """
 
 
 class ConflictError(APIError):
@@ -456,6 +532,21 @@ class CallbackAnsweredError(ConflictError):
     Each press can be answered once, so this is safe to ignore. When an answer timed out and
     the retry gets this, the first try went through, and the client returns ``True`` instead of
     raising.
+    """
+
+
+class ChatIsPublicError(ConflictError):
+    """409 ``chat_is_public``: a public chat has no invite links.
+
+    Its public handle is its link already (``hidesay.me/<handle>``). Share that instead.
+    """
+
+
+class ChatFullError(ConflictError):
+    """409 ``chat_full``: the group or channel has as many members as it can take.
+
+    Raised when approving a request to join. Somebody has to leave before anybody else can
+    come in.
     """
 
 
@@ -510,8 +601,8 @@ class ServerError(APIError):
     """5xx: the server failed.
 
     It has the code ``internal``, or ``try_again`` when the server could not look a webhook's
-    host up just then, or comes from any other ``5xx`` answer, with or without the API's
-    envelope. The client already tried again for the calls that are safe to repeat
+    host up just then or is short of disk for an upload, or comes from any other ``5xx``
+    answer, with or without the API's envelope. The client already tried again for the calls that are safe to repeat
     (`RetryPolicy.attempts` tries in all), and a polling bot keeps trying on its own. Worth
     retrying later.
     """
@@ -542,12 +633,16 @@ _BY_CODE: dict[str, type[APIError]] = {
     "bad_markup": BadMarkupError,
     "bad_webhook": BadWebhookError,
     "chat_is_open": ChatIsOpenError,
+    "bad_media": BadMediaError,
+    "chat_is_protected": ChatIsProtectedError,
     "too_large": PayloadTooLargeError,
     "unauthorized": AuthenticationError,
     "bot_paused": BotPausedError,
     "forbidden": ForbiddenError,
     "blocked_by_user": BlockedByUserError,
     "user_gone": UserGoneError,
+    "reads_all_needed": ReadsAllNeededError,
+    "comments_closed": CommentsClosedError,
     "not_found": EndpointNotFoundError,
     "chat_not_found": ChatNotFoundError,
     "message_not_found": MessageNotFoundError,
@@ -556,9 +651,14 @@ _BY_CODE: dict[str, type[APIError]] = {
     "username_not_found": UsernameNotFoundError,
     "no_user_key": NoUserKeyError,
     "callback_not_found": CallbackNotFoundError,
+    "sticker_not_found": StickerNotFoundError,
+    "invite_not_found": InviteNotFoundError,
+    "request_not_found": JoinRequestNotFoundError,
     "conflict": SendIdConflictError,
     "webhook_active": WebhookActiveError,
     "callback_answered": CallbackAnsweredError,
+    "chat_is_public": ChatIsPublicError,
+    "chat_full": ChatFullError,
     "callback_expired": CallbackExpiredError,
     "rate_limited": RateLimitError,
     "flood_wait": FloodWaitError,
@@ -674,8 +774,8 @@ class NetworkError(HidesayBotError):
     """The request got no answer: DNS, a refused or reset connection, TLS, a timeout.
 
     The client already tried again, up to `RetryPolicy.attempts` tries in all, for the calls
-    that are safe to repeat: every operation except ``get_updates`` and ``send_typing``. Media
-    downloads are not retried. A polling bot keeps trying on its own. An answer larger than
+    that are safe to repeat (`RetryPolicy` lists the ones that are not). Media downloads are
+    not retried. A polling bot keeps trying on its own. An answer larger than
     8 MiB is a `NetworkError` too, and is not retried: asking again would only download it
     again. The message names the request and the cause, never the token.
     """
@@ -830,9 +930,36 @@ class NotARecipientError(DecryptionError):
     Usually it was written to an old key after a rotation (keep the old key in
     ``pgp_previous_keys`` for 72 hours), the bot runs with a key that is not the published one
     (``hidesay-bot whoami`` shows the published fingerprint), or it is an attachment in an
-    encrypted group: phones seal those only to the group's key list, which leaves out bots in
-    privacy mode. Retrying does not help: load the right key.
+    encrypted group: phones seal those only to the group's key list, which has the bot in it
+    only when the room lets it read every message (`Seat.reads_all`). Retrying does not help:
+    load the right key.
     """
+
+
+class MediaIntegrityError(CryptoError):
+    """A downloaded file is not the one its message describes: its SHA-256 differs.
+
+    The sender's app puts the SHA-256 of the file as it opens next to the file's ID, inside the
+    message (`Media.sha256`), and `Bot.download_media` checks it. A file that fails the check
+    was changed after it was sent, on the server or on the way, and is not handed over.
+    Retrying downloads the same bytes.
+
+    Attributes:
+        expected (str): The SHA-256 the message gives, in lowercase hex.
+        actual (str): The SHA-256 of what was downloaded.
+    """
+
+    def __init__(self, message: str, *, expected: str, actual: str) -> None:
+        """Creates the error.
+
+        Args:
+            message: What happened, for a person.
+            expected: The SHA-256 the message gives.
+            actual: The SHA-256 of what was downloaded.
+        """
+        super().__init__(message)
+        self.expected = expected
+        self.actual = actual
 
 
 class SignatureError(CryptoError):

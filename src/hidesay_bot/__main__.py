@@ -17,8 +17,8 @@ Installing hidesay-bot adds a ``hidesay-bot`` command; ``python -m hidesay_bot``
 - ``fingerprint`` prints the fingerprint of a key file: a public key, a private key, or a key
   file sealed with a passphrase, which it has to unlock. ``--spaced`` prints it in groups of
   four.
-- ``whoami`` asks the server who the token belongs to: the handle, the mode and the key, the
-  status, the webhook and the updates waiting.
+- ``whoami`` asks the server who the token belongs to: the handle and the other handles, the
+  mode and the key, the status, the webhook and the updates waiting.
 - ``publish-key`` loads a private key, asking for its passphrase if needed, and publishes its
   public part: the bot becomes protected, and its private chats end-to-end encrypted. Only
   the owner can undo that, from the console, so it asks you to type ``publish`` first;
@@ -163,8 +163,10 @@ def cmd_whoami(args: argparse.Namespace) -> int:
     with Client() as api:
         me = api.get_me()
     print(f"@{me.username} (id {me.id}) - {me.name}")
+    if me.usernames:
+        print("also:     " + ", ".join(f"@{name}" for name in me.usernames))
     print(f"mode:     {me.mode.value}" + (f", key {format_fingerprint(me.fingerprint)}" if me.fingerprint else ""))
-    print(f"status:   {me.status.value}, privacy mode {'on' if me.privacy_mode else 'off'}")
+    print(f"status:   {me.status.value}")
     print(
         f"webhook:  {me.webhook.url or 'none (polling)'}"
         + (f", {me.webhook.failures} failures" if me.webhook.failures else "")

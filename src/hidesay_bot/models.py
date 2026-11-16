@@ -46,7 +46,7 @@ from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .errors import PayloadError
+from .errors import PayloadError, ValidationError
 from .keyboard import InlineKeyboard
 
 if TYPE_CHECKING:
@@ -55,10 +55,12 @@ if TYPE_CHECKING:
 __all__ = [
     "KEEP",
     "AdminRights",
+    "Ban",
     "BotInfo",
     "BotStatus",
     "CallbackQuery",
     "CallbackQueryBase",
+    "ChannelStats",
     "Chat",
     "ChatCard",
     "ChatKeys",
@@ -68,27 +70,47 @@ __all__ = [
     "ChatMode",
     "ChatPeer",
     "ChatRef",
+    "ChatUpdated",
     "Command",
     "CommandScope",
+    "Comments",
     "DeletedMessages",
+    "Forward",
+    "ForwardChat",
+    "GrowthPoint",
     "HandleKind",
+    "Invite",
+    "JoinRequest",
     "Limits",
+    "LinkCard",
     "Media",
+    "MediaIn",
     "Member",
+    "MemberPermissions",
     "Message",
     "MessageBase",
+    "MessageReactions",
+    "Picture",
+    "PostViews",
+    "Profile",
     "PublishedKey",
+    "Reaction",
+    "ReactionCount",
+    "ReactionUpdate",
     "Resolved",
     "Seat",
     "SeatStatus",
     "SentMessage",
     "SentMessageBase",
     "SignatureStatus",
+    "StatsWindow",
+    "Sticker",
     "SyncCallbackQuery",
     "SyncMessage",
     "SyncSentMessage",
     "Update",
     "UpdateKind",
+    "UploadedFile",
     "User",
     "UserKey",
     "Verification",
@@ -105,6 +127,8 @@ class _Keep:
     ``markup=None`` removes the buttons, and a keyboard replaces them. You rarely write ``KEEP``
     yourself: `Bot.edit_message`, `SentMessage.edit` and `CallbackQuery.edit_message` use it when
     ``markup`` is left out. It is false in a boolean test, so check for it with ``markup is KEEP``.
+    The settings of a room and of a seat use it the same way for the fields where ``None`` means
+    something (``description=None`` clears the description).
     """
 
     __slots__ = ()
@@ -122,6 +146,10 @@ KEEP: Any = _Keep()
 ``markup=None`` removes the buttons, and a keyboard replaces them. You rarely write ``KEEP``
 yourself: `Bot.edit_message`, `SentMessage.edit` and `CallbackQuery.edit_message` use it when
 ``markup`` is left out. It is false in a boolean test, so check for it with ``markup is KEEP``.
+
+`Bot.update_chat` and `Bot.update_member` use it the same way for the fields where ``None``
+means something: ``description=None`` clears the description, ``description=KEEP`` (the
+default) leaves it alone.
 """
 
 
@@ -212,27 +240,46 @@ class UpdateKind(_OpenEnum):
     """What an `Update` is about, and so which of its fields is set.
 
     A kind that a newer server adds becomes a member of its own. Such an update has none of those
-    fields set, and its JSON is still in ``raw``.
+    fields set, and its JSON is still in ``raw``. The two kinds a bot's Web-Bot causes,
+    ``"web_bot_write_access"`` and ``"web_bot_contact"``, come through that way in this version.
 
     Attributes:
-        MESSAGE: ``"message"``, a new message for the bot, in a private chat or a group. It is
-            in the update's ``message``.
+        MESSAGE: ``"message"``, a new message for the bot: in a private chat, or one meant for
+            it in a group or channel. It is in the update's ``message``.
         EDITED_MESSAGE: ``"edited_message"``, somebody edited a message the bot had received.
             The new version is in ``message``.
+        COMMENT: ``"comment"``, a comment under a channel post, by the same rule as a message.
+            It is in ``message``, whose ``thread_root`` is the post.
+        EDITED_COMMENT: ``"edited_comment"``, a comment the bot had received was edited. The
+            new version is in ``message``.
         DELETED_MESSAGES: ``"deleted_messages"``, messages were deleted for everyone. They are
             listed in ``deleted``.
+        MESSAGE_REACTION: ``"message_reaction"``, somebody put, changed or took back a reaction
+            on a message the bot was handed. The change is in ``reaction``.
         CALLBACK_QUERY: ``"callback_query"``, somebody pressed a button with callback data under
             one of the bot's messages. The press is in ``callback_query``.
         MY_CHAT_MEMBER: ``"my_chat_member"``, the bot's own seat in a chat changed: added,
-            promoted, restricted, removed or left; in a private chat, blocked or unblocked. The
-            change is in ``chat_member``.
+            promoted, restricted, let read every message or stopped, removed or left; in a
+            private chat, blocked or unblocked. The change is in ``chat_member``.
+        CHAT_MEMBER: ``"chat_member"``, somebody else's seat changed: joined, left, removed,
+            banned, promoted or restricted. The change is in ``member_update``.
+        JOIN_REQUEST: ``"join_request"``, somebody asked to come in through a link that needs
+            approval. The request is in ``join_request``.
+        CHAT_UPDATED: ``"chat_updated"``, the group or channel itself changed: its name, its
+            picture, a setting, the pins. The change is in ``chat_updated``.
     """
 
     MESSAGE = "message"
     EDITED_MESSAGE = "edited_message"
+    COMMENT = "comment"
+    EDITED_COMMENT = "edited_comment"
     DELETED_MESSAGES = "deleted_messages"
+    MESSAGE_REACTION = "message_reaction"
     CALLBACK_QUERY = "callback_query"
     MY_CHAT_MEMBER = "my_chat_member"
+    CHAT_MEMBER = "chat_member"
+    JOIN_REQUEST = "join_request"
+    CHAT_UPDATED = "chat_updated"
 
 
 class BotStatus(_OpenEnum):
@@ -343,6 +390,19 @@ def _list(data: Mapping[str, Any], key: str) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _ints(data: Mapping[str, Any], key: str) -> tuple[int, ...]:
+    return tuple(i for i in _list(data, key) if isinstance(i, int) and not isinstance(i, bool))
+
+
+def _opt_bool(data: Mapping[str, Any], key: str) -> bool | None:
+    value = data.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _objects(data: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
+    return [item for item in _list(data, key) if isinstance(item, Mapping)]
+
+
 _M = TypeVar("_M", bound="_Model")
 
 
@@ -355,6 +415,10 @@ class _Model:
 def _rebind(cls: type[_M], obj: _Model, bot: Any) -> _M:
     values = {f.name: getattr(obj, f.name) for f in fields(obj)}
     values["_bot"] = bot
+    quoted = values.get("reply_to_message")
+    if isinstance(quoted, _Model):
+        # the quoted message acts through the same bot: message.reply_to_message.reply(...)
+        values["reply_to_message"] = _rebind(cls, quoted, bot)
     return cls(**values)
 
 
@@ -389,7 +453,7 @@ class User(_Model):
         """The first and last name, joined by a space.
 
         Without a name, the handle with ``@``; without either, ``"user <id>"``, as in
-        ``"user 55"``.
+        ``"user 48213907"``.
         """
         name = " ".join(p for p in (self.first_name, self.last_name) if p)
         return name or (f"@{self.username}" if self.username else f"user {self.id}")
@@ -544,6 +608,7 @@ class AdminRights(_Model):
         post_messages: May post messages.
         edit_messages: May edit messages.
         manage_comments: May manage comments.
+        manage_dividers: May draw and remove the dividers that split a chat into sections.
     """
 
     delete_messages: bool = False
@@ -556,6 +621,7 @@ class AdminRights(_Model):
     post_messages: bool = False
     edit_messages: bool = False
     manage_comments: bool = False
+    manage_dividers: bool = False
 
     @classmethod
     def from_json(cls, data: Any) -> AdminRights:
@@ -583,6 +649,63 @@ class AdminRights(_Model):
             post_messages=_bool(d, "postMessages"),
             edit_messages=_bool(d, "editMessages"),
             manage_comments=_bool(d, "manageComments"),
+            manage_dividers=_bool(d, "manageDividers"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MemberPermissions(_Model):
+    """What an ordinary member may do, one flag per permission.
+
+    `Chat.permissions` holds what every member of a group may do; `Seat.permissions` what one
+    seat may do, which is less for a restricted member and everything for an admin. A
+    permission this version does not know is still in ``raw``, under its JSON name.
+
+    Attributes:
+        send_messages: May write.
+        send_media: May send files, pictures and clips.
+        send_voice: May send voice notes.
+        add_members: May add people, and make invite links.
+        pin_messages: May pin messages.
+        change_info: May change the name, the description and the picture.
+        react: May react to messages.
+        add_dividers: May draw dividers.
+    """
+
+    send_messages: bool = False
+    send_media: bool = False
+    send_voice: bool = False
+    add_members: bool = False
+    pin_messages: bool = False
+    change_info: bool = False
+    react: bool = False
+    add_dividers: bool = False
+
+    @classmethod
+    def from_json(cls, data: Any) -> MemberPermissions:
+        """Builds the permissions from a ``permissions`` object.
+
+        Args:
+            data: The object, with one boolean per permission (``sendMessages``, ``react``, ...).
+
+        Returns:
+            The permissions, with ``data`` kept in ``raw``. A permission that is missing is
+            ``False``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "permissions")
+        return cls(
+            send_messages=_bool(d, "sendMessages"),
+            send_media=_bool(d, "sendMedia"),
+            send_voice=_bool(d, "sendVoice"),
+            add_members=_bool(d, "addMembers"),
+            pin_messages=_bool(d, "pinMessages"),
+            change_info=_bool(d, "changeInfo"),
+            react=_bool(d, "react"),
+            add_dividers=_bool(d, "addDividers"),
             raw=d,
         )
 
@@ -593,7 +716,15 @@ class Seat(_Model):
 
     Which fields are set depends on `status`. An ``admin`` seat carries ``admin_rights``,
     ``can`` and maybe ``custom_title``; a ``member`` or ``restricted`` seat carries ``rights``
-    and maybe ``restricted_until``; ``left`` and ``kicked`` carry nothing else.
+    and maybe ``restricted_until``; both carry ``permissions``. ``left`` and ``kicked`` carry
+    nothing else.
+
+    A bot's seat also says whether the room lets it read every message (`reads_all`). That is
+    the room's decision: it is off when an admin adds the bot, an admin turns it on or off in
+    the app, and the bot hears of every change in a ``my_chat_member`` update. Nothing in the
+    API changes it. With it off, the bot gets in a group or channel only commands, mentions of
+    it, replies to its messages (a comment under its post counts) and the presses of its
+    buttons.
 
     Attributes:
         status: Where the seat stands: admin, member, restricted, left or kicked.
@@ -604,6 +735,10 @@ class Seat(_Model):
         rights: What a member or a restricted member may do, as a bit mask.
         restricted_until: When a restriction ends. ``None`` when it has no end, and for a seat
             that is not restricted.
+        permissions: What this seat may do as a member, by name: everything for an admin.
+            ``None`` for a seat that is not in the chat.
+        reads_all: Bots only: ``True`` when the room lets this bot read every message, not
+            only what is meant for it. ``False`` for everybody else.
     """
 
     status: SeatStatus
@@ -612,6 +747,8 @@ class Seat(_Model):
     custom_title: str | None = None
     rights: int | None = None
     restricted_until: datetime | None = None
+    permissions: MemberPermissions | None = None
+    reads_all: bool = False
 
     @property
     def is_admin(self) -> bool:
@@ -643,6 +780,7 @@ class Seat(_Model):
 
 def _seat_fields(d: Mapping[str, Any]) -> dict[str, Any]:
     can = d.get("can")
+    permissions = d.get("permissions")
     return {
         "status": SeatStatus(_str(d, "status") or "left"),
         "admin_rights": _int(d, "adminRights"),
@@ -650,6 +788,8 @@ def _seat_fields(d: Mapping[str, Any]) -> dict[str, Any]:
         "custom_title": _str(d, "customTitle"),
         "rights": _int(d, "rights"),
         "restricted_until": _when(d, "restrictedUntil"),
+        "permissions": MemberPermissions.from_json(permissions) if isinstance(permissions, Mapping) else None,
+        "reads_all": _bool(d, "readsAll"),
     }
 
 
@@ -689,7 +829,10 @@ class Chat(ChatRef):
     """A chat the bot is in, with its mode: what `Bot.get_chat` returns (``GET /chats/{id}``).
 
     It has every field of `ChatRef`, and more. A private chat fills ``user`` and ``blocked``; a
-    group or channel fills the others, including the bot's own seat in ``me``.
+    group or channel fills the others, including the bot's own seat in ``me``. A
+    ``my_chat_member`` and a ``chat_updated`` update carry a group or channel this way too,
+    without ``me`` (a ``my_chat_member`` has the seat in its ``new``). A field the server did
+    not send is ``None``.
 
     Attributes:
         mode: Readable or end-to-end encrypted, and so which body a message must carry. If a
@@ -704,6 +847,23 @@ class Chat(ChatRef):
         slow_mode_seconds: In a group, the slow mode delay in seconds, ``0`` when it is off.
             Sending faster than that raises `SlowModeError`.
         me: In a group or channel, the bot's own seat.
+        photo_url: Where the picture of a group or channel is, ``/media/<id>`` on the API
+            server, or ``None`` when it has none.
+        banner_url: The same for its banner.
+        permissions: What an ordinary member of a group may do.
+        members_hidden: ``True`` when the member list is shown to the admins only.
+        protect_content: ``True`` when messages here can't be forwarded, copied or saved.
+        auto_delete_seconds: After how many seconds new messages delete themselves, ``0`` when
+            they don't.
+        reactions_enabled: ``True`` when people may react to messages.
+        allowed_reactions: The only emoji people may react with, or ``None`` for any.
+        pinned_message_ids: The IDs of the pinned messages the bot could open; a pin it never saw is left out.
+        signatures: In a channel, ``True`` when posts show who wrote them.
+        signature_profiles: In a channel, ``True`` when a signature links to the profile.
+        admins_hidden: In a channel, ``True`` when the admins are kept from the subscribers.
+        comments_enabled: In a channel, ``True`` when posts take comments.
+        comment_signing: In a channel, ``True`` when its admins may comment under their own
+            name.
     """
 
     mode: ChatMode
@@ -714,11 +874,34 @@ class Chat(ChatRef):
     history_visible: bool | None = None
     slow_mode_seconds: int | None = None
     me: Seat | None = None
+    photo_url: str | None = None
+    banner_url: str | None = None
+    permissions: MemberPermissions | None = None
+    members_hidden: bool | None = None
+    protect_content: bool | None = None
+    auto_delete_seconds: int | None = None
+    reactions_enabled: bool | None = None
+    allowed_reactions: tuple[str, ...] | None = None
+    pinned_message_ids: tuple[int, ...] = ()
+    signatures: bool | None = None
+    signature_profiles: bool | None = None
+    admins_hidden: bool | None = None
+    comments_enabled: bool | None = None
+    comment_signing: bool | None = None
 
     @property
     def protected(self) -> bool:
         """``True`` when the chat is end-to-end encrypted (`mode` is ``protected``)."""
         return self.mode == ChatMode.PROTECTED
+
+    @property
+    def reads_all(self) -> bool:
+        """``True`` when the room lets the bot read every message (``me.reads_all``).
+
+        ``False`` when `me` is not known, and in a private chat, where the bot reads
+        everything anyway.
+        """
+        return self.me is not None and self.me.reads_all
 
     @classmethod
     def from_json(cls, data: Any) -> Chat:
@@ -732,14 +915,13 @@ class Chat(ChatRef):
             ``"private"``, a missing ``mode`` as ``"protected"``.
 
         Raises:
-            PayloadError: ``data`` is not an object, or it or its ``user`` has no integer
-                ``id``.
+            PayloadError: ``data`` is not an object, or it or its ``user`` has no ``id``.
         """
         d = _obj(data, "chat")
         user = d.get("user")
         me = d.get("me")
-        blocked = d.get("blocked")
-        history = d.get("historyVisible")
+        permissions = d.get("permissions")
+        allowed = d.get("allowedReactions")
         return cls(
             id=_req_id(d, "id", "chat"),
             kind=ChatKind(_str(d, "kind") or "private"),
@@ -749,12 +931,26 @@ class Chat(ChatRef):
             # without disclosing anything, words in clear for an encrypted one are not
             mode=ChatMode(_str(d, "mode") or "protected"),
             user=ChatPeer.from_json(user) if isinstance(user, Mapping) else None,
-            blocked=blocked if isinstance(blocked, bool) else None,
+            blocked=_opt_bool(d, "blocked"),
             description=_str(d, "description"),
             member_count=_int(d, "memberCount"),
-            history_visible=history if isinstance(history, bool) else None,
+            history_visible=_opt_bool(d, "historyVisible"),
             slow_mode_seconds=_int(d, "slowModeSeconds"),
             me=Seat.from_json(me) if isinstance(me, Mapping) else None,
+            photo_url=_str(d, "photoUrl"),
+            banner_url=_str(d, "bannerUrl"),
+            permissions=MemberPermissions.from_json(permissions) if isinstance(permissions, Mapping) else None,
+            members_hidden=_opt_bool(d, "membersHidden"),
+            protect_content=_opt_bool(d, "protectContent"),
+            auto_delete_seconds=_int(d, "autoDeleteSeconds"),
+            reactions_enabled=_opt_bool(d, "reactionsEnabled"),
+            allowed_reactions=tuple(e for e in allowed if isinstance(e, str)) if isinstance(allowed, list) else None,
+            pinned_message_ids=_ints(d, "pinnedMessageIds"),
+            signatures=_opt_bool(d, "signatures"),
+            signature_profiles=_opt_bool(d, "signatureProfiles"),
+            admins_hidden=_opt_bool(d, "adminsHidden"),
+            comments_enabled=_opt_bool(d, "commentsEnabled"),
+            comment_signing=_opt_bool(d, "commentSigning"),
             raw=d,
         )
 
@@ -948,7 +1144,8 @@ class ChatKeys(_Model):
 
     The answer of ``GET /chats/{id}/keys``. `Bot` fetches these keys by itself before it sends
     into an encrypted chat. The bot's own key is never in the list: add it yourself when you seal
-    by hand (`BotKey.seal` does). Bots in privacy mode are left out, as the app does.
+    by hand (`BotKey.seal` does). Other bots are in it only when the room lets them read every
+    message, as for the app.
 
     Attributes:
         keys: One `UserKey` per member who has a key. In a private chat, the person's only.
@@ -1093,6 +1290,10 @@ class Limits(_Model):
         api_calls_per_minute: API calls per minute, of any kind. Default 600.
         commands_per_scope: The most commands in one menu. Default 100.
         command_description_max: The longest command description, in characters. Default 256.
+        upload_bytes_max: The largest file one upload takes, in bytes. Default 52428800
+            (50 MiB).
+        uploads_per_minute: Uploads per minute. Default 30.
+        history_limit_max: The most messages one page of history hands over. Default 100.
     """
 
     text_max: int = 4096
@@ -1115,6 +1316,9 @@ class Limits(_Model):
     api_calls_per_minute: int = 600
     commands_per_scope: int = 100
     command_description_max: int = 256
+    upload_bytes_max: int = 50 * 1024 * 1024
+    uploads_per_minute: int = 30
+    history_limit_max: int = 100
 
     def get(self, name: str, default: int | None = None) -> int | None:
         """Reads any limit by its JSON name, including the ones this version has no field for.
@@ -1209,18 +1413,21 @@ class BotInfo(_Model):
     `Bot.get_me` returns it, and `Bot` keeps the answer it got at start-up in `Bot.me`. It works
     while the bot is paused, so it is the way to find out why nothing else does.
 
+    What the bot reads in a group or channel is not here: each room decides it for itself, and
+    the bot's seat there says what it decided (`Seat.reads_all`).
+
     Attributes:
         id: The bot's ID, with its letter: ``"B48213907"``.
-        username: Its handle, without ``@``. It ends in ``bot``.
+        username: Its main handle, without ``@``. It ends in ``bot``.
         name: Its display name.
-        about: The one line under the name on its profile, or ``None``.
+        last_name: The surname the owner gave it, or ``None``.
+        usernames: The other handles the owner added, oldest first. Each one reaches the bot
+            like the main one: in a link, in a mention, after the ``@`` of a command.
+        about: The bio under the name on its profile, or ``None``.
         description: What the bot does, shown before the first message, or ``None``.
         mode: The mode of the bot's private chats: ``protected`` once it has published a key,
             ``open`` before.
         fingerprint: The fingerprint of the published key, or ``None``.
-        privacy_mode: ``True`` when, in groups, the bot gets only what is addressed to it:
-            commands, mentions of its handle and replies to its messages. ``False`` when it
-            gets every message of a readable group. The owner sets it in the app.
         allow_groups: ``True`` when people can add the bot to groups.
         status: ``active``, or ``paused`` when the owner paused the bot.
         webhook: The webhook in brief.
@@ -1238,16 +1445,22 @@ class BotInfo(_Model):
     id: str
     username: str
     name: str
+    last_name: str | None = None
+    usernames: tuple[str, ...] = ()
     about: str | None = None
     description: str | None = None
     mode: ChatMode = ChatMode.OPEN
     fingerprint: str | None = None
-    privacy_mode: bool = True
     allow_groups: bool = True
     status: BotStatus = BotStatus.ACTIVE
     webhook: WebhookSummary = field(default_factory=WebhookSummary)
     queued: int = 0
     limits: Limits = field(default_factory=Limits)
+
+    @property
+    def handles(self) -> tuple[str, ...]:
+        """Every handle the bot answers to, the main one first and then `usernames`."""
+        return tuple(h for h in (self.username, *self.usernames) if h)
 
     @property
     def protected(self) -> bool:
@@ -1281,12 +1494,13 @@ class BotInfo(_Model):
             id=_req_id(d, "id", "me"),
             username=_str(d, "username") or "",
             name=_str(d, "name") or "",
+            last_name=_str(d, "lastName"),
+            usernames=tuple(u for u in _list(d, "usernames") if isinstance(u, str) and u),
             about=_str(d, "about"),
             description=_str(d, "description"),
             # a bot is protected exactly when it has a published key
             mode=ChatMode(_str(d, "mode") or ("protected" if _str(d, "fingerprint") else "open")),
             fingerprint=_str(d, "fingerprint"),
-            privacy_mode=_bool(d, "privacyMode", True),
             allow_groups=_bool(d, "allowGroups", True),
             status=BotStatus(_str(d, "status") or "active"),
             webhook=WebhookSummary.from_json(d.get("webhook")),
@@ -1447,31 +1661,33 @@ class CommandScope(_Model):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Media(_Model):
-    """A picture, clip or file attached to a message: one item of ``message.media``.
+    """A picture, clip, voice note or file attached to a message: one item of ``message.media``.
 
-    In a readable chat the server lists only the pictures and videos that were sent in the clear.
-    In an encrypted chat the list comes from inside the encrypted message, so it describes every
-    kind of attachment, and the files on the server are normally encrypted too.
-    `Bot.download_media` downloads a file and decrypts it. That always works in a private chat. In
-    an encrypted group the sender's phone seals the file only to the members' keys, so it works
-    only when the bot is among them (its privacy mode is off); otherwise the download raises
-    `NotARecipientError`.
+    In a readable chat the server reads the list out of the message; in an encrypted chat the
+    bot reads it from inside the decrypted message. Either way it describes every kind of
+    attachment. `Bot.download_media` downloads a file, decrypts it when it is ``encrypted`` and
+    checks its ``sha256``. A file of an encrypted group is sealed only to the keys the
+    sender's phone sealed it to, so a bot gets at it only when the room lets it read every
+    message (`Seat.reads_all`); otherwise the download raises `NotARecipientError`.
 
     Attributes:
         id: The file's ID, a UUID.
-        kind: What it is: ``"image"``, ``"video"``, ``"audio"`` or ``"file"``.
+        kind: What it is: ``"image"``, ``"video"``, ``"audio"`` (a voice note) or ``"file"``
+            (anything else, music included).
         mime: The MIME type, such as ``"image/jpeg"``, or ``None``.
         url: Where the file is, ``/media/<id>`` on the API server. `Bot.download_media` uses it.
         width: The width in pixels, or ``None``.
         height: The height in pixels, or ``None``.
-        duration_ms: The length of a clip, in milliseconds, or ``None``. The API calls it
-            ``duration``.
-        name: The file name, when the sender's app gives one, or ``None``. Only in encrypted
-            chats.
-        size: The size in bytes, when the sender's app gives it, or ``None``. Only in encrypted
-            chats.
-        encrypted: ``True`` when the file on the server is encrypted with OpenPGP.
+        duration_ms: The length of a clip or a voice note, in milliseconds, or ``None``. The
+            API calls it ``duration``.
+        name: The file name, when the sender's app gives one, or ``None``.
+        size: The size in bytes, when the sender's app gives it, or ``None``.
+        encrypted: ``True`` when the file on the server is sealed with OpenPGP: always in an
+            encrypted chat, and in a readable one for a file first sent to an encrypted chat.
             `Bot.download_media` then decrypts it.
+        thumb: A tiny JPEG of a picture or a clip, base64, for a blurred preview, or ``None``.
+        sha256: The SHA-256 of the file as it opens, lowercase hex, when the sender gave it.
+            `Bot.download_media` checks it.
     """
 
     id: str
@@ -1484,21 +1700,23 @@ class Media(_Model):
     name: str | None = None
     size: int | None = None
     encrypted: bool = False
+    thumb: str | None = None
+    sha256: str | None = None
 
     @classmethod
     def from_json(cls, data: Any) -> Media:
         """Builds an attachment from an item of the ``media`` of a message in a readable chat.
 
-        The server sends no ``name``, ``size`` or ``encrypted`` there, so they keep their
-        defaults. Attachments of encrypted chats are read from inside the decrypted message
-        instead.
+        Attachments of encrypted chats are read from inside the decrypted message instead.
 
         Args:
             data: The media object (``id``, ``kind``, ``mime``, ``url``, ``width``,
-                ``height``, ``duration``).
+                ``height``, ``duration``, ``name``, ``size``, ``plain``, ``thumb``,
+                ``sha256``).
 
         Returns:
-            The attachment, with ``data`` kept in ``raw``. A missing ``kind`` is ``"file"``.
+            The attachment, with ``data`` kept in ``raw``. A missing ``kind`` is ``"file"``;
+            ``encrypted`` is ``True`` only when ``plain`` is ``false``.
 
         Raises:
             PayloadError: ``data`` is not an object, or its ``id`` is missing.
@@ -1508,6 +1726,7 @@ class Media(_Model):
         if not media_id:
             raise PayloadError("media.id: missing")
         duration = _num(d, "duration")
+        sha256 = _str(d, "sha256")
         return cls(
             id=media_id,
             kind=_str(d, "kind") or "file",
@@ -1516,6 +1735,238 @@ class Media(_Model):
             width=_int(d, "width"),
             height=_int(d, "height"),
             duration_ms=round(duration) if duration is not None else None,
+            name=_str(d, "name"),
+            size=_int(d, "size"),
+            # an older server sends no "plain": everything it listed went up in the clear
+            encrypted=d.get("plain") is False,
+            thumb=_str(d, "thumb"),
+            sha256=sha256.lower() if sha256 else None,
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MediaIn(_Model):
+    """A file to send into a readable chat, described the way phones lay it out.
+
+    Upload the file first (`AsyncClient.upload_file`), then pass one ``MediaIn`` per file in the
+    ``media`` of `AsyncClient.send_message`. `Bot.send_media` does all of it, and also works in
+    encrypted chats, where the description travels sealed inside the message instead.
+
+    Attributes:
+        id: The ID `AsyncClient.upload_file` returned.
+        kind: ``"image"``, ``"video"``, ``"audio"`` (a voice note) or ``"file"`` (anything
+            else, music included).
+        mime: The MIME type, such as ``"image/jpeg"``, or ``None`` for the default of the kind.
+        name: The file name, up to 255 characters, without slashes, or ``None``.
+        size: The size in bytes, or ``None``.
+        width: The width of a picture or a clip, in pixels, or ``None``.
+        height: The height, in pixels, or ``None``.
+        duration_ms: The length of a clip or a voice note, in milliseconds, or ``None``.
+        thumb: A tiny JPEG, base64, up to 12000 characters, shown blurred until the file is
+            fetched, or ``None``.
+        sha256: The SHA-256 of the file, 64 hex digits, which phones check after downloading,
+            or ``None``.
+
+    Example:
+        >>> MediaIn(id="0f3c5a3e-1111-2222-3333-444455556666", kind="image", width=640).to_json()
+        {'id': '0f3c5a3e-1111-2222-3333-444455556666', 'kind': 'image', 'width': 640}
+    """
+
+    id: str
+    kind: str = "file"
+    mime: str | None = None
+    name: str | None = None
+    size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_ms: int | None = None
+    thumb: str | None = None
+    sha256: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        """Turns the description into the API's JSON form, leaving out what is ``None``.
+
+        Returns:
+            A dict as ``POST /messages`` takes it in ``media``.
+        """
+        names = (
+            ("id", self.id),
+            ("kind", self.kind),
+            ("mime", self.mime),
+            ("name", self.name),
+            ("size", self.size),
+            ("width", self.width),
+            ("height", self.height),
+            ("duration", self.duration_ms),
+            ("thumb", self.thumb),
+            ("sha256", self.sha256),
+        )
+        return {key: value for key, value in names if value is not None}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Sticker(_Model):
+    """A sticker: the one a message carries, or what `Bot.get_sticker` says about one.
+
+    Attributes:
+        id: The sticker's ID, or ``None`` when the message did not say.
+        pack_id: The pack it belongs to, or ``None``.
+        media_id: The ID of the file it is drawn from. Pass it to `Bot.send_sticker` as
+            ``media_id``: it proves the bot was shown a sticker of a pack that is not public.
+        emoji: The emoji it stands for, or ``None``.
+        url: Where its file is, ``/media/<id>`` on the API server, or ``None``.
+    """
+
+    id: int | None = None
+    pack_id: int | None = None
+    media_id: str = ""
+    emoji: str | None = None
+    url: str | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Sticker:
+        """Builds a sticker from the API's JSON (``id``, ``packId``, ``mediaId``, ``emoji``, ``url``).
+
+        Args:
+            data: The sticker object.
+
+        Returns:
+            The sticker, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "sticker")
+        return cls(
+            id=_int(d, "id"),
+            pack_id=_int(d, "packId"),
+            media_id=_str(d, "mediaId") or "",
+            emoji=_str(d, "emoji") or None,
+            url=_str(d, "url"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardChat(_Model):
+    """The group or channel a forwarded message was said in: `Forward.chat`.
+
+    Attributes:
+        id: The chat's ID, ``"G48213907"`` or ``"C48213907"``, or ``None`` when it is not known.
+        title: Its name as the forward remembers it, or ``None``.
+        username: Its public handle as the forward remembers it, or ``None``.
+        message_id: The message there, or the channel's post, or ``None``.
+    """
+
+    id: str | None = None
+    title: str | None = None
+    username: str | None = None
+    message_id: int | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> ForwardChat:
+        """Builds the chat from the ``chat`` of a forward.
+
+        Args:
+            data: The ``chat`` object.
+
+        Returns:
+            The chat, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "forward.chat")
+        return cls(
+            id=_str(d, "id"),
+            title=_str(d, "title"),
+            username=_str(d, "username"),
+            message_id=_int(d, "messageId"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Forward(_Model):
+    """Who a forwarded message came from, as the forward says: `MessageBase.forward`.
+
+    The forward is the word of whoever forwarded it. In a readable chat the server keeps an ID
+    only for an account or a chat that exists; in an encrypted chat the bot reads the forward
+    itself, and the IDs are what the forwarder's app wrote, unchecked.
+
+    Attributes:
+        name: The name of the person or the channel it came from, or ``None``.
+        username: Their handle, or ``None``.
+        user_id: The person it came from, unless they switched the link to their profile off,
+            or it came from a channel. ``None`` then.
+        chat: The group or channel it was said in, or ``None`` for a private chat.
+    """
+
+    name: str | None = None
+    username: str | None = None
+    user_id: str | None = None
+    chat: ForwardChat | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Forward:
+        """Builds the forward from the ``forward`` of a message in a readable chat.
+
+        Args:
+            data: The ``forward`` object.
+
+        Returns:
+            The forward, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "forward")
+        chat = d.get("chat")
+        return cls(
+            name=_str(d, "name"),
+            username=_str(d, "username"),
+            user_id=_str(d, "userId"),
+            chat=ForwardChat.from_json(chat) if isinstance(chat, Mapping) else None,
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LinkCard(_Model):
+    """The card the sender's phone made for the first link in a message: `MessageBase.link`.
+
+    Attributes:
+        url: The link.
+        title: The page's title, or ``None``.
+        description: The page's description, or ``None``.
+        site_name: The site's name, or ``None``.
+    """
+
+    url: str
+    title: str | None = None
+    description: str | None = None
+    site_name: str | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> LinkCard:
+        """Builds the card from the ``link`` of a message.
+
+        Args:
+            data: The ``link`` object.
+
+        Returns:
+            The card, with ``data`` kept in ``raw``. A missing ``url`` is ``""``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "link")
+        return cls(
+            url=_str(d, "url") or "",
+            title=_str(d, "title"),
+            description=_str(d, "description"),
+            site_name=_str(d, "siteName"),
             raw=d,
         )
 
@@ -1575,10 +2026,11 @@ class MessageBase(_Model):
     return them as `SentMessage` objects.
 
     In an end-to-end encrypted chat, the bot decrypts the message before any handler sees it.
-    `text` and `media` then come from inside it, `armored` keeps the original, `plaintext` the
-    exact decrypted body, and `verification` says what the signature check found. A message the
-    bot cannot decrypt goes to the error handlers instead. In a readable chat the server reads
-    the message itself: `armored`, `plaintext` and `verification` are ``None``.
+    `text`, `media`, `sticker`, `forward` and `link` then come from inside it, `armored` keeps
+    the original, `plaintext` the exact decrypted body, and `verification` says what the
+    signature check found. A message the bot cannot decrypt goes to the error handlers instead.
+    In a readable chat the server reads the message itself: `armored`, `plaintext` and
+    `verification` are ``None``.
 
     Attributes:
         id: The message's ID, unique inside its chat.
@@ -1586,16 +2038,14 @@ class MessageBase(_Model):
         from_user: Who wrote it. ``None`` for a channel post in the channel's name: the bot,
             like any reader, is not told who wrote it.
         date: When it was sent, in UTC.
-        reply_to: The ID of the message it answers, or ``None``.
+        reply_to: The ID of the message it answers, or ``None`` (also when that message never reached the bot).
         kind: The kind of message, as the server says: ``"user"`` for anything a person typed
             or attached.
-        text: What the person wrote, or the caption of a picture. ``None`` when there are no
-            words, as for a sticker, a call notice or a payment request. In a readable chat
-            the server hands it over trimmed, with runs of empty lines folded into one, and
-            cut at 4000 characters. In an encrypted chat it is the decrypted text as the
-            person wrote it; only ``CR LF`` line ends become ``LF``.
-        media: The pictures, clips and files that came with it, one `Media` each. Empty when
-            there are none.
+        text: What the person wrote, or the caption of a file or an album. ``None`` when there
+            are no words, as for a sticker or a call notice. In an encrypted chat it is the
+            decrypted text as the person wrote it; only ``CR LF`` line ends become ``LF``.
+        media: The pictures, clips, voice notes and files that came with it, one `Media` each.
+            Empty when there are none.
         signature: For a channel post in the channel's name, the name a signed post shows its
             readers. ``None`` when the channel does not sign its posts, and for any other
             message.
@@ -1606,6 +2056,15 @@ class MessageBase(_Model):
             JSON. The bot reads `text` and `media` out of it. ``None`` in a readable chat.
         verification: In an encrypted chat, what the check of the sender's signature found.
             ``None`` in a readable chat.
+        reply_to_message: The message `reply_to` quotes, when the bot was handed that one too:
+            its own, or one the room delivered to it. ``None`` otherwise, even when
+            `reply_to` is set. It quotes nothing further.
+        thread_root: For a comment, the channel post it hangs under. ``None`` for anything
+            else.
+        markup: The buttons under it. Only ever on a bot's message, as in a quoted one.
+        sticker: The sticker, when the message is one.
+        forward: Who the message was forwarded from, when it is a forward.
+        link: The card the sender's phone made for the first link in the text, if it made one.
 
     Example:
         >>> message = MessageBase.from_json({
@@ -1639,6 +2098,12 @@ class MessageBase(_Model):
     armored: str | None = None
     plaintext: str | None = None
     verification: Verification | None = None
+    reply_to_message: MessageBase | None = None
+    thread_root: int | None = None
+    markup: InlineKeyboard | None = None
+    sticker: Sticker | None = None
+    forward: Forward | None = None
+    link: LinkCard | None = None
     _bot: Any = field(default=None, repr=False, compare=False, hash=False)
 
     @property
@@ -1650,6 +2115,11 @@ class MessageBase(_Model):
     def chat_id(self) -> str:
         """The ID of the chat, the same as ``message.chat.id``."""
         return self.chat.id
+
+    @property
+    def is_comment(self) -> bool:
+        """``True`` for a comment under a channel post (`thread_root` is set)."""
+        return self.thread_root is not None
 
     @property
     def is_command(self) -> bool:
@@ -1677,14 +2147,19 @@ class MessageBase(_Model):
 
         Raises:
             PayloadError: ``data`` is not an object; its ``id`` or ``date`` is missing or not
-                an integer; its ``chat`` is missing or not valid; or its ``from`` or one of
-                its ``media`` items is not valid.
+                an integer; its ``chat`` is missing or not valid; or its ``from``, one of its
+                ``media`` items or the message it quotes is not valid.
         """
         d = _obj(data, "message")
         date = _when(d, "date")
         if date is None:
             raise PayloadError("message.date: expected unix milliseconds")
         sender = d.get("from")
+        quoted = d.get("replyToMessage")
+        markup = d.get("markup")
+        sticker = d.get("sticker")
+        forward = d.get("forward")
+        link = d.get("link")
         return cls(
             id=_req_int(d, "id", "message"),
             chat=ChatRef.from_json(d.get("chat")),
@@ -1696,6 +2171,13 @@ class MessageBase(_Model):
             media=tuple(Media.from_json(m) for m in _list(d, "media") if isinstance(m, Mapping)),
             signature=_str(d, "signature"),
             armored=_str(d, "armored"),
+            # the quoted one is plain data, whatever class reads the outer message
+            reply_to_message=MessageBase.from_json(quoted) if isinstance(quoted, Mapping) else None,
+            thread_root=_int(d, "threadRoot"),
+            markup=InlineKeyboard.from_json(markup) if isinstance(markup, Mapping) else None,
+            sticker=Sticker.from_json(sticker) if isinstance(sticker, Mapping) else None,
+            forward=Forward.from_json(forward) if isinstance(forward, Mapping) else None,
+            link=LinkCard.from_json(link) if isinstance(link, Mapping) else None,
             raw=d,
         )
 
@@ -1715,9 +2197,12 @@ class SentMessageBase(_Model):
         reply_to: The ID of the message it quotes, or ``None``.
         markup: Its buttons, or ``None`` when it has none.
         text: Its text, in a readable chat. ``None`` in an encrypted chat, where the server
-            cannot read it.
+            cannot read it. For a file, a sticker or a forward it is the body the phones read,
+            the app's internal format (a marker followed by JSON).
         armored: In an encrypted chat, the OpenPGP message that was sent, sealed and signed,
             ASCII-armored. ``None`` in a readable chat.
+        thread_root: For a comment, the channel post it hangs under. ``None`` for anything
+            else.
     """
 
     id: int
@@ -1727,6 +2212,7 @@ class SentMessageBase(_Model):
     markup: InlineKeyboard | None = None
     text: str | None = None
     armored: str | None = None
+    thread_root: int | None = None
     _bot: Any = field(default=None, repr=False, compare=False, hash=False)
 
     @property
@@ -1763,6 +2249,7 @@ class SentMessageBase(_Model):
             markup=InlineKeyboard.from_json(markup) if isinstance(markup, Mapping) else None,
             text=_str(d, "text"),
             armored=_str(d, "armored"),
+            thread_root=_int(d, "threadRoot"),
             raw=d,
         )
 
@@ -1868,29 +2355,128 @@ class DeletedMessages(_Model):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ChatMemberUpdate(_Model):
-    """A change of the bot's own seat in a chat: what a ``my_chat_member`` update carries.
-
-    Handlers registered with `Router.on_chat_member` get it. The bot was added, promoted,
-    restricted, removed, or it left; in a private chat, the person blocked it (the seat becomes
-    ``kicked``) or unblocked it (``member`` again). `joined`, `left`, `blocked` and `unblocked`
-    name the usual cases; compare `old` and `new` for the others, such as a promotion
-    (``change.new.is_admin``). Its ``raw`` is the JSON of the whole update.
+class ReactionCount(_Model):
+    """How many people reacted to a message with one emoji: an item of `ReactionUpdate.reactions`.
 
     Attributes:
-        chat: The chat where the bot's seat changed.
-        from_user: Who made the change, or ``None`` when the update does not say.
-        date: When it changed, in UTC, or ``None`` when the update does not say.
-        old: The bot's seat before the change.
-        new: The bot's seat after it.
+        emoji: The emoji, or a custom emoji as the app writes it.
+        count: How many people reacted with it.
+    """
+
+    emoji: str
+    count: int = 0
+
+    @classmethod
+    def from_json(cls, data: Any) -> ReactionCount:
+        """Builds the count from the API's JSON (``emoji``, ``count``).
+
+        Args:
+            data: One item of ``reactions``.
+
+        Returns:
+            The count, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "reaction")
+        return cls(emoji=_str(d, "emoji") or "", count=_int(d, "count") or 0, raw=d)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReactionUpdate(_Model):
+    """Somebody put, changed or took back a reaction: what a ``message_reaction`` update carries.
+
+    Handlers registered with `Router.on_reaction` get it. Only reactions on a message the bot
+    was handed come through, its own messages included. Its ``raw`` is the JSON of the whole
+    update.
+
+    Attributes:
+        chat: The chat of the message.
+        message_id: The message that was reacted to.
+        thread_root: When the message is a comment, the post it hangs under; otherwise ``None``.
+        from_user: Who reacted.
+        date: When, in UTC, or ``None`` when the update does not say.
+        old: The emoji this person had on the message before, or ``None``.
+        new: The emoji they have on it now, or ``None`` when they took it back.
+        reactions: Every reaction on the message now, by emoji, with how many people put it.
 
     Example:
-        Say hello in a new group, and log who blocks the bot::
+        Count the thumbs up under a poll::
+
+            @bot.on_reaction(emoji="👍")
+            async def liked(reaction):
+                log.info("message %s now has %s", reaction.message_id, reaction.counts.get("👍", 0))
+    """
+
+    chat: ChatRef
+    message_id: int
+    thread_root: int | None = None
+    from_user: User | None = None
+    date: datetime | None = None
+    old: str | None = None
+    new: str | None = None
+    reactions: tuple[ReactionCount, ...] = ()
+
+    @property
+    def added(self) -> bool:
+        """``True`` when the person had no reaction there and now has one."""
+        return self.old is None and self.new is not None
+
+    @property
+    def removed(self) -> bool:
+        """``True`` when the person took their reaction back."""
+        return self.old is not None and self.new is None
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """`reactions` as a dict, emoji to count."""
+        return {r.emoji: r.count for r in self.reactions}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChatMemberUpdate(_Model):
+    """A change of a seat in a chat: what a ``my_chat_member`` or a ``chat_member`` update carries.
+
+    With `user` left ``None`` it is the bot's own seat (``my_chat_member``), and handlers
+    registered with `Router.on_chat_member` get it: the bot was added, promoted, restricted,
+    let read every message or stopped, removed, or it left; in a private chat, the person
+    blocked it (the seat becomes ``kicked``) or unblocked it (``member`` again). With `user`
+    set it is somebody else's seat (``chat_member``), for `Router.on_member_update`: they
+    joined, left, were removed, banned, promoted or restricted. `joined`, `left`, `blocked`,
+    `unblocked` and `reads_all_changed` name the usual cases; compare `old` and `new` for the
+    others, such as a promotion (``change.new.is_admin``). Its ``raw`` is the JSON of the whole
+    update.
+
+    When the bot is added to a group or channel, `chat` is the whole room, a `Chat` with its
+    settings and permissions, so the bot knows where it is and what it may do without asking.
+    The room does not let a new bot read every message (``new.reads_all`` is ``False``): if
+    that is what the bot is for, this is the moment to say so in the room, and why.
+
+    Attributes:
+        chat: The chat where the seat changed: a `Chat` for the bot's own seat in a group or
+            channel, a `ChatRef` otherwise.
+        from_user: Who made the change, or ``None`` when the update does not say (a channel
+            that hides its admins hides them from a bot that isn't one).
+        date: When it changed, in UTC, or ``None`` when the update does not say.
+        old: The seat before the change.
+        new: The seat after it.
+        user: Whose seat it is, for a ``chat_member`` update. ``None`` for the bot's own.
+
+    Example:
+        Say hello in a new group, ask to read everything when the bot needs it, and log who
+        blocks the bot::
 
             @bot.on_chat_member()
             async def seat_changed(change):
                 if change.joined and change.chat.is_group:
                     await bot.send_message(change.chat, "Hello. Type /help to see what I do.")
+                    if not change.reads_all:
+                        await bot.send_message(
+                            change.chat,
+                            "I keep the minutes, so I need to read every message: an admin can "
+                            "allow it from my entry in the member list.",
+                        )
                 elif change.blocked:
                     log.info("blocked in chat %s", change.chat.id)
     """
@@ -1900,6 +2486,21 @@ class ChatMemberUpdate(_Model):
     date: datetime | None
     old: Seat
     new: Seat
+    user: User | None = None
+
+    @property
+    def reads_all(self) -> bool:
+        """``True`` when the room lets this seat's bot read every message now (``new.reads_all``)."""
+        return self.new.reads_all
+
+    @property
+    def reads_all_changed(self) -> bool:
+        """``True`` when the room just let the bot read every message, or stopped it.
+
+        Only counts while the bot stays in the chat: being added or removed is `joined` or
+        `left`.
+        """
+        return self.old.is_inside and self.new.is_inside and self.old.reads_all != self.new.reads_all
 
     @property
     def joined(self) -> bool:
@@ -1933,27 +2534,109 @@ class ChatMemberUpdate(_Model):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class JoinRequest(_Model):
+    """Somebody asked to come into a group or channel through a link that needs approval.
+
+    A ``join_request`` update carries one, for the bots with the *add members* right, and
+    `Bot.get_join_requests` lists the ones waiting. Answer with `Bot.decide_join_request`.
+
+    Attributes:
+        chat: The group or channel.
+        from_user: Who asked.
+        date: When they asked, in UTC, or ``None`` when the server did not say.
+    """
+
+    chat: ChatRef
+    from_user: User
+    date: datetime | None = None
+
+    @classmethod
+    def from_json(cls, data: Any, chat: ChatRef | None = None) -> JoinRequest:
+        """Builds a request from an item of ``GET /chats/{id}/requests``, or a ``join_request`` update.
+
+        Args:
+            data: The item (``user``, ``date``) or the update (``chat``, ``from``, ``date``).
+            chat: The chat the list was asked for, when ``data`` does not name it.
+
+        Returns:
+            The request, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, it names no chat and none is given, or
+                its ``user`` (``from``) is missing or not valid.
+        """
+        d = _obj(data, "join request")
+        if chat is None:
+            chat = ChatRef.from_json(d.get("chat"))
+        return cls(
+            chat=chat,
+            from_user=User.from_json(d.get("from", d.get("user"))),
+            date=_when(d, "date"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChatUpdated(_Model):
+    """A group or channel changed: what a ``chat_updated`` update carries.
+
+    Handlers registered with `Router.on_chat_updated` get it. Its ``raw`` is the JSON of the
+    whole update.
+
+    Attributes:
+        chat: The room as it is now.
+        from_user: Who changed it, or ``None`` when the update does not say (a channel that
+            hides its admins hides them from a bot that isn't one).
+        date: When, in UTC, or ``None`` when the update does not say.
+        changed: What moved, by the names of `Bot.update_chat` in the API's spelling
+            (``"title"``, ``"slowModeSeconds"``...), or ``"photo"``, ``"banner"``,
+            ``"pinnedMessageIds"``, ``"commentsEnabled"``.
+
+    Example:
+        Keep a copy of the pins::
+
+            @bot.on_chat_updated(f.changed("pinnedMessageIds"))
+            async def pins(update):
+                pinned[update.chat.id] = update.chat.pinned_message_ids
+    """
+
+    chat: Chat
+    from_user: User | None = None
+    date: datetime | None = None
+    changed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Update(_Model):
     """One thing that happened, as the server delivers it.
 
     `kind` says what happened, and so which of the other fields is set: `message` for a new or
-    an edited message, `callback_query` for a button press, `deleted` for messages deleted for
-    everyone, `chat_member` for a change of the bot's own seat. The others are ``None``.
+    an edited message or comment, `callback_query` for a button press, `deleted` for messages
+    deleted for everyone, `reaction` for a reaction, `chat_member` for a change of the bot's own
+    seat, `member_update` for somebody else's, `join_request` for a request to join and
+    `chat_updated` for a change of the room. The others are ``None``.
 
-    Handlers get the event, not the update: a `Message`, a `CallbackQuery`, a `DeletedMessages`
-    or a `ChatMemberUpdate`. A handler registered with `Router.on_update`, and any handler with
-    an ``update`` parameter, gets the `Update` itself. Its events are data only: a `MessageBase`
-    or a `CallbackQueryBase`, without the methods. A kind that a newer server adds still parses:
-    such an update has no event, and its JSON is in ``raw``.
+    Handlers get the event, not the update: a `Message`, a `CallbackQuery`, a `DeletedMessages`,
+    a `ReactionUpdate`, a `ChatMemberUpdate`, a `JoinRequest` or a `ChatUpdated`. A handler
+    registered with `Router.on_update`, and any handler with an ``update`` parameter, gets the
+    `Update` itself. Its events are data only: a `MessageBase` or a `CallbackQueryBase`, without
+    the methods. A kind that a newer server adds still parses: such an update has no event, and
+    its JSON is in ``raw``. So do ``web_bot_write_access`` and ``web_bot_contact``, the two a
+    bot's Web-Bot causes; a `Router.on_update` handler gets them.
 
     Attributes:
         update_id: The update's ID. It grows by one with each update the bot gets.
         kind: What happened.
-        message: For a ``message`` update, the new message; for an ``edited_message`` update,
-            the message as it is after the edit.
+        message: For a ``message`` or ``comment`` update, the new message; for an
+            ``edited_message`` or ``edited_comment`` update, the message as it is after the
+            edit.
         callback_query: For a ``callback_query`` update, the button press.
         deleted: For a ``deleted_messages`` update, the messages that were deleted.
         chat_member: For a ``my_chat_member`` update, the change of the bot's seat.
+        reaction: For a ``message_reaction`` update, the reaction.
+        member_update: For a ``chat_member`` update, the change of somebody else's seat.
+        join_request: For a ``join_request`` update, the request.
+        chat_updated: For a ``chat_updated`` update, the room as it is now and what moved.
 
     Example:
         >>> update = Update.from_json({
@@ -1974,6 +2657,10 @@ class Update(_Model):
     callback_query: CallbackQueryBase | None = None
     deleted: DeletedMessages | None = None
     chat_member: ChatMemberUpdate | None = None
+    reaction: ReactionUpdate | None = None
+    member_update: ChatMemberUpdate | None = None
+    join_request: JoinRequest | None = None
+    chat_updated: ChatUpdated | None = None
 
     @property
     def chat(self) -> ChatRef | None:
@@ -1981,48 +2668,51 @@ class Update(_Model):
 
         ``None`` only for a kind this version does not know.
         """
-        if self.message is not None:
-            return self.message.chat
-        if self.callback_query is not None:
-            return self.callback_query.chat
-        if self.deleted is not None:
-            return self.deleted.chat
-        if self.chat_member is not None:
-            return self.chat_member.chat
-        return None
+        event = self.event
+        chat = getattr(event, "chat", None)
+        return chat if isinstance(chat, ChatRef) else None
 
     @property
     def from_user(self) -> User | None:
         """Who caused the update, when it says.
 
-        The sender of a message, the person who pressed a button, or who changed the bot's
-        seat. ``None`` for deleted messages, for a channel post in the channel's name, for a
-        seat change that does not say who, and for a kind this version does not know.
+        The sender of a message, the person who pressed a button or reacted, who changed a
+        seat or the room, or who asked to join. ``None`` for deleted messages, for a channel
+        post in the channel's name, for a change that does not say who, and for a kind this
+        version does not know.
         """
-        if self.message is not None:
-            return self.message.from_user
-        if self.callback_query is not None:
-            return self.callback_query.from_user
-        if self.chat_member is not None:
-            return self.chat_member.from_user
-        return None
+        sender = getattr(self.event, "from_user", None)
+        return sender if isinstance(sender, User) else None
 
     @property
     def event(self) -> Any:
         """The event the update carries, whichever field holds it.
 
-        A `MessageBase`, a `CallbackQueryBase`, a `DeletedMessages` or a `ChatMemberUpdate`,
-        as `kind` says. ``None`` for a kind this version does not know.
+        A `MessageBase`, a `CallbackQueryBase`, a `DeletedMessages`, a `ReactionUpdate`, a
+        `ChatMemberUpdate`, a `JoinRequest` or a `ChatUpdated`, as `kind` says. ``None`` for a
+        kind this version does not know.
         """
-        return self.message or self.callback_query or self.deleted or self.chat_member
+        for event in (
+            self.message,
+            self.callback_query,
+            self.deleted,
+            self.chat_member,
+            self.reaction,
+            self.member_update,
+            self.join_request,
+            self.chat_updated,
+        ):
+            if event is not None:
+                return event
+        return None
 
     @classmethod
     def from_json(cls, data: Any) -> Update:
         """Builds an update, its event included, from the API's JSON.
 
-        The bot does this for every update it fetches or is sent. The event is built as a
-        plain `MessageBase`, `CallbackQueryBase`, `DeletedMessages` or `ChatMemberUpdate`:
-        attached to no bot, and not decrypted.
+        The bot does this for every update it fetches or is sent. The event is built as plain
+        data (a `MessageBase`, a `CallbackQueryBase`, ...): attached to no bot, and not
+        decrypted.
 
         Args:
             data: One update, as ``GET /updates`` lists them or a webhook posts it.
@@ -2041,24 +2731,468 @@ class Update(_Model):
         update_id = _req_int(d, "updateId", "update")
         kind = UpdateKind(_str(d, "kind") or "unknown")
         values: dict[str, Any] = {}
-        if kind in (UpdateKind.MESSAGE, UpdateKind.EDITED_MESSAGE):
+        if kind in (UpdateKind.MESSAGE, UpdateKind.EDITED_MESSAGE, UpdateKind.COMMENT, UpdateKind.EDITED_COMMENT):
             values["message"] = MessageBase.from_json(d.get("message"))
         elif kind == UpdateKind.CALLBACK_QUERY:
             values["callback_query"] = CallbackQueryBase.from_json(d.get("callback"))
         elif kind == UpdateKind.DELETED_MESSAGES:
-            ids = tuple(i for i in _list(d, "messageIds") if isinstance(i, int) and not isinstance(i, bool))
-            values["deleted"] = DeletedMessages(chat=ChatRef.from_json(d.get("chat")), message_ids=ids, raw=d)
-        elif kind == UpdateKind.MY_CHAT_MEMBER:
-            sender = d.get("from")
-            values["chat_member"] = ChatMemberUpdate(
+            values["deleted"] = DeletedMessages(
+                chat=ChatRef.from_json(d.get("chat")), message_ids=_ints(d, "messageIds"), raw=d
+            )
+        elif kind == UpdateKind.MESSAGE_REACTION:
+            values["reaction"] = ReactionUpdate(
                 chat=ChatRef.from_json(d.get("chat")),
-                from_user=User.from_json(sender) if isinstance(sender, Mapping) else None,
+                message_id=_req_int(d, "messageId", "update"),
+                thread_root=_int(d, "threadRoot"),
+                from_user=_sender(d),
+                date=_when(d, "date"),
+                old=_str(d, "old"),
+                new=_str(d, "new"),
+                reactions=tuple(ReactionCount.from_json(r) for r in _list(d, "reactions") if isinstance(r, Mapping)),
+                raw=d,
+            )
+        elif kind in (UpdateKind.MY_CHAT_MEMBER, UpdateKind.CHAT_MEMBER):
+            mine = kind == UpdateKind.MY_CHAT_MEMBER
+            change = ChatMemberUpdate(
+                chat=_room_or_ref(d.get("chat")) if mine else ChatRef.from_json(d.get("chat")),
+                from_user=_sender(d),
                 date=_when(d, "date"),
                 old=Seat.from_json(d.get("old")),
                 new=Seat.from_json(d.get("new")),
+                user=None if mine else User.from_json(d.get("user")),
+                raw=d,
+            )
+            values["chat_member" if mine else "member_update"] = change
+        elif kind == UpdateKind.JOIN_REQUEST:
+            values["join_request"] = JoinRequest.from_json(d)
+        elif kind == UpdateKind.CHAT_UPDATED:
+            values["chat_updated"] = ChatUpdated(
+                chat=Chat.from_json(d.get("chat")),
+                from_user=_sender(d),
+                date=_when(d, "date"),
+                changed=tuple(c for c in _list(d, "changed") if isinstance(c, str)),
                 raw=d,
             )
         return cls(update_id=update_id, kind=kind, **values, raw=d)
+
+
+def _sender(d: Mapping[str, Any]) -> User | None:
+    sender = d.get("from")
+    return User.from_json(sender) if isinstance(sender, Mapping) else None
+
+
+def _room_or_ref(data: Any) -> ChatRef:
+    # a group or channel comes whole, with its mode; a private chat stays the short reference
+    d = _obj(data, "chat")
+    return Chat.from_json(d) if "mode" in d else ChatRef.from_json(d)
+
+
+# --- what the newer operations answer ---
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Reaction(_Model):
+    """One reaction on a message, as `Bot.set_reaction` lists them: `MessageReactions.reactions`.
+
+    Attributes:
+        emoji: The emoji.
+        mine: ``True`` for the bot's own reaction.
+    """
+
+    emoji: str
+    mine: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MessageReactions(_Model):
+    """The reactions on a message after the bot reacted: what `Bot.set_reaction` returns.
+
+    Attributes:
+        message_id: The message.
+        reactions: Every reaction on it, one item per person who reacted.
+    """
+
+    message_id: int
+    reactions: tuple[Reaction, ...] = ()
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """How many people reacted with each emoji."""
+        counts: dict[str, int] = {}
+        for reaction in self.reactions:
+            counts[reaction.emoji] = counts.get(reaction.emoji, 0) + 1
+        return counts
+
+    @classmethod
+    def from_json(cls, data: Any) -> MessageReactions:
+        """Builds the reactions from the answer of ``PUT /messages/{id}/reaction``.
+
+        Args:
+            data: The answer, with ``messageId`` and ``reactions``.
+
+        Returns:
+            The reactions, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, or its ``messageId`` is missing.
+        """
+        d = _obj(data, "reactions")
+        items = [r for r in _list(d, "reactions") if isinstance(r, Mapping)]
+        return cls(
+            message_id=_req_int(d, "messageId", "reactions"),
+            reactions=tuple(Reaction(emoji=_str(r, "emoji") or "", mine=_bool(r, "mine"), raw=r) for r in items),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UploadedFile(_Model):
+    """A file the bot uploaded, ready to go into a message: what `Bot.upload_file` returns.
+
+    Attributes:
+        id: The file's ID, for the ``media`` of a send, or for the envelope of an encrypted
+            message.
+        url: Where it is, ``/media/<id>`` on the API server.
+        size: How many bytes the server stored.
+    """
+
+    id: str
+    url: str | None = None
+    size: int | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> UploadedFile:
+        """Builds the file from the answer of ``POST /attachments``.
+
+        Args:
+            data: The answer, with ``id``, ``url`` and ``size``.
+
+        Returns:
+            The file, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
+        """
+        d = _obj(data, "attachment")
+        file_id = _str(d, "id")
+        if not file_id:
+            raise PayloadError("attachment.id: missing")
+        return cls(id=file_id, url=_str(d, "url"), size=_int(d, "size"), raw=d)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Picture(_Model):
+    """A chat's new picture or banner: what `Bot.set_chat_photo` and `Bot.set_chat_banner` return.
+
+    Attributes:
+        url: Where it is, ``/media/<id>`` on the API server.
+        mime: What the server found it to be, such as ``"image/png"`` or ``"video/mp4"``.
+    """
+
+    url: str
+    mime: str | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Picture:
+        """Builds the picture from the answer of ``PUT /chats/{id}/photo`` or ``/banner``.
+
+        Args:
+            data: The answer, with ``url`` and ``mime``.
+
+        Returns:
+            The picture, with ``data`` kept in ``raw``. A missing ``url`` is ``""``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "picture")
+        return cls(url=_str(d, "url") or "", mime=_str(d, "mime"), raw=d)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Invite(_Model):
+    """An invite link of a group or channel: `Bot.get_invites` lists them, `Bot.create_invite` makes one.
+
+    Attributes:
+        code: The link's code, what `Bot.revoke_invite` takes.
+        url: The link to share, or ``None`` when the server does not know its public address.
+        label: The name it was given, or ``None``.
+        expires_at: When it stops working, in UTC, or ``None`` for never.
+        max_uses: How many people may use it, or ``None`` for no limit.
+        uses: How many people used it.
+        needs_approval: ``True`` when whoever uses it asks first, and waits for an admin or a
+            bot to let them in.
+        created_at: When it was made, in UTC, or ``None``.
+    """
+
+    code: str
+    url: str | None = None
+    label: str | None = None
+    expires_at: datetime | None = None
+    max_uses: int | None = None
+    uses: int = 0
+    needs_approval: bool = False
+    created_at: datetime | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Invite:
+        """Builds an invite link from the API's JSON.
+
+        Args:
+            data: One invite object.
+
+        Returns:
+            The link, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, or its ``code`` is missing.
+        """
+        d = _obj(data, "invite")
+        code = _str(d, "code")
+        if not code:
+            raise PayloadError("invite.code: missing")
+        return cls(
+            code=code,
+            url=_str(d, "url"),
+            label=_str(d, "label"),
+            expires_at=_when(d, "expiresAt"),
+            max_uses=_int(d, "maxUses"),
+            uses=_int(d, "uses") or 0,
+            needs_approval=_bool(d, "needsApproval"),
+            created_at=_when(d, "createdAt"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Ban(_Model):
+    """Somebody banned from a group or channel: `Bot.get_bans` lists them.
+
+    Attributes:
+        user: Who is banned.
+        banned_until: When the ban ends, in UTC, or ``None`` for good.
+        banned_at: When they were banned, in UTC, or ``None``.
+    """
+
+    user: User
+    banned_until: datetime | None = None
+    banned_at: datetime | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Ban:
+        """Builds a ban from the API's JSON (``user``, ``bannedUntil``, ``bannedAt``).
+
+        Args:
+            data: One ban object.
+
+        Returns:
+            The ban, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, or its ``user`` is missing or not valid.
+        """
+        d = _obj(data, "ban")
+        return cls(
+            user=User.from_json(d.get("user")),
+            banned_until=_when(d, "bannedUntil"),
+            banned_at=_when(d, "bannedAt"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Profile(User):
+    """Somebody's public profile, as anybody in a chat with them sees it: `Bot.get_user`.
+
+    It has every field of `User`, and more. Never a phone number. Somebody who blocked the bot
+    keeps their pictures to themselves: the URLs are ``None`` then.
+
+    Attributes:
+        usernames: The other handles they answer to.
+        bio: The text under their name, or ``None``.
+        avatar_url: Their picture, ``/media/<id>`` on the API server, or ``None``.
+        avatar_mime: What kind of file the picture is, or ``None``.
+        banner_url: Their banner, or ``None``.
+        banner_mime: What kind of file the banner is, or ``None``.
+        has_key: ``True`` when they published an OpenPGP key.
+        fingerprint: The fingerprint of that key, or ``None``.
+    """
+
+    usernames: tuple[str, ...] = ()
+    bio: str | None = None
+    avatar_url: str | None = None
+    avatar_mime: str | None = None
+    banner_url: str | None = None
+    banner_mime: str | None = None
+    has_key: bool = False
+    fingerprint: str | None = None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Profile:
+        """Builds a profile from the answer of ``GET /users/{id}``.
+
+        Args:
+            data: The answer.
+
+        Returns:
+            The profile, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, or its ``id`` is missing.
+        """
+        d = _obj(data, "profile")
+        return cls(
+            id=_req_id(d, "id", "profile"),
+            username=_str(d, "username"),
+            first_name=_str(d, "firstName"),
+            last_name=_str(d, "lastName"),
+            is_bot=_bool(d, "isBot"),
+            usernames=tuple(u for u in _list(d, "usernames") if isinstance(u, str) and u),
+            bio=_str(d, "bio"),
+            avatar_url=_str(d, "avatarUrl"),
+            avatar_mime=_str(d, "avatarMime"),
+            banner_url=_str(d, "bannerUrl"),
+            banner_mime=_str(d, "bannerMime"),
+            has_key=_bool(d, "hasKey"),
+            fingerprint=_str(d, "fingerprint"),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StatsWindow(_Model):
+    """Subscribers who came and went over the last few days: an item of `ChannelStats.windows`.
+
+    Attributes:
+        days: How many days the window covers.
+        joined: How many subscribed.
+        left: How many left.
+    """
+
+    days: int
+    joined: int = 0
+    left: int = 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GrowthPoint(_Model):
+    """One step of a channel's growth: an item of `ChannelStats.growth`.
+
+    Attributes:
+        at: The start of the step, in UTC, or ``None``.
+        joined: How many subscribed in it.
+        left: How many left in it.
+    """
+
+    at: datetime | None = None
+    joined: int = 0
+    left: int = 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PostViews(_Model):
+    """A post and how many times it was seen: an item of `ChannelStats.top_posts`.
+
+    Attributes:
+        id: The post's ID. Only the ID: the numbers never hand over a post's words.
+        views: How many times it was seen.
+        date: When it was posted, in UTC, or ``None``.
+    """
+
+    id: int
+    views: int = 0
+    date: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChannelStats(_Model):
+    """A channel's numbers, for its admins: what `Bot.get_channel_stats` returns.
+
+    Attributes:
+        subscribers: How many subscribers it has now.
+        windows: Who came and went over the last 7 and 30 days.
+        growth: Who came and went step by step, over 30 days.
+        posts: How many recent posts the views are counted over.
+        total_views: The views of those posts together.
+        average_views: The views of one of them, on average.
+        top_posts: The most seen of them, best first.
+    """
+
+    subscribers: int = 0
+    windows: tuple[StatsWindow, ...] = ()
+    growth: tuple[GrowthPoint, ...] = ()
+    posts: int = 0
+    total_views: int = 0
+    average_views: int = 0
+    top_posts: tuple[PostViews, ...] = ()
+
+    @classmethod
+    def from_json(cls, data: Any) -> ChannelStats:
+        """Builds the numbers from the answer of ``GET /chats/{id}/stats``.
+
+        Args:
+            data: The answer.
+
+        Returns:
+            The numbers, with ``data`` kept in ``raw``. A number that is missing is ``0``.
+
+        Raises:
+            PayloadError: ``data`` is not an object.
+        """
+        d = _obj(data, "stats")
+        return cls(
+            subscribers=_int(d, "subscribers") or 0,
+            windows=tuple(
+                StatsWindow(days=_int(w, "days") or 0, joined=_int(w, "joined") or 0, left=_int(w, "left") or 0, raw=w)
+                for w in _objects(d, "windows")
+            ),
+            growth=tuple(
+                GrowthPoint(at=_when(g, "at"), joined=_int(g, "joined") or 0, left=_int(g, "left") or 0, raw=g)
+                for g in _objects(d, "growth")
+            ),
+            posts=_int(d, "posts") or 0,
+            total_views=_int(d, "totalViews") or 0,
+            average_views=_int(d, "averageViews") or 0,
+            top_posts=tuple(
+                PostViews(id=_int(p, "id") or 0, views=_int(p, "views") or 0, date=_when(p, "date"), raw=p)
+                for p in _objects(d, "topPosts")
+            ),
+            raw=d,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Comments(_Model):
+    """One page of the comments under a channel post: what `Bot.get_comments` returns.
+
+    Attributes:
+        open: ``True`` when the post takes comments right now.
+        messages: The comments the bot was handed, newest first. `Bot` hands them over
+            decrypted and ready to answer; the low-level clients as they came.
+    """
+
+    open: bool = False
+    messages: tuple[MessageBase, ...] = ()
+
+    @classmethod
+    def from_json(cls, data: Any) -> Comments:
+        """Builds the page from the answer of ``GET /chats/{id}/posts/{postId}/comments``.
+
+        Args:
+            data: The answer, with ``open`` and ``messages``.
+
+        Returns:
+            The page, with ``data`` kept in ``raw``.
+
+        Raises:
+            PayloadError: ``data`` is not an object, or one of its messages is not valid.
+        """
+        d = _obj(data, "comments")
+        return cls(
+            open=_bool(d, "open"),
+            messages=tuple(MessageBase.from_json(m) for m in _list(d, "messages")),
+            raw=d,
+        )
 
 
 # --- the acting flavours ---
@@ -2107,7 +3241,9 @@ class Message(MessageBase):
         """Answers in the same chat, quoting this message unless ``quote=False``.
 
         A send like any other: `Bot.send_message` does the work, so the answer is sealed and
-        signed when the chat is end-to-end encrypted, and the same errors come out of it.
+        signed when the chat is end-to-end encrypted, and the same errors come out of it. The
+        answer to a comment is a comment under the same post (`Bot.send_comment`), which takes
+        no buttons, no ``silent`` and no ``send_id``.
 
         Args:
             text: The answer, with the rules of `Bot.send_message`.
@@ -2122,10 +3258,19 @@ class Message(MessageBase):
             The `SentMessage` as the server stored it, which can be edited or deleted.
 
         Raises:
+            ValidationError: Buttons on the answer to a comment.
             RuntimeError: The message was not handed out by a `Bot`, so it has nothing to
                 answer through.
         """
-        sent: SentMessage = await _need(self._bot).send_message(
+        bot = _need(self._bot)
+        if self.thread_root is not None:
+            if markup is not None:
+                raise ValidationError("a comment carries no buttons", field="markup")
+            comment: SentMessage = await bot.send_comment(
+                self.chat.id, self.thread_root, text, reply_to=self.id if quote else None, encrypt=encrypt
+            )
+            return comment
+        sent: SentMessage = await bot.send_message(
             self.chat.id,
             text,
             reply_to=self.id if quote else None,
@@ -2164,7 +3309,10 @@ class Message(MessageBase):
         return await self.reply(text, markup=markup, quote=False, silent=silent, encrypt=encrypt, send_id=send_id)
 
     async def delete(self) -> bool:
-        """Deletes this message for everyone. Needs the *delete messages* right in a group.
+        """Deletes this message for everyone.
+
+        Anybody's in a private chat; in a group or channel, it needs the *delete messages*
+        right (a comment, the *manage comments* right).
 
         Returns:
             ``True`` once the message is gone.
@@ -2189,6 +3337,83 @@ class Message(MessageBase):
             RuntimeError: The message was not handed out by a `Bot`.
         """
         return bool(await _need(self._bot).send_typing(self.chat.id, typing))
+
+    async def react(self, emoji: str) -> MessageReactions:
+        """Puts the bot's reaction on this message, in place of the one it had: `Bot.set_reaction`.
+
+        Args:
+            emoji: The emoji, or a custom emoji as the app writes it.
+
+        Returns:
+            Every reaction on the message now.
+
+        Raises:
+            ForbiddenError: Reactions are off here, the chat does not take this emoji, or the
+                bot may not react.
+            RuntimeError: The message was not handed out by a `Bot`.
+        """
+        reactions: MessageReactions = await _need(self._bot).set_reaction(self.chat.id, self.id, emoji)
+        return reactions
+
+    async def remove_reaction(self) -> bool:
+        """Takes the bot's reaction off this message: `Bot.remove_reaction`.
+
+        Returns:
+            ``True`` when there was one, ``False`` when the bot had none there.
+
+        Raises:
+            RuntimeError: The message was not handed out by a `Bot`.
+        """
+        return bool(await _need(self._bot).remove_reaction(self.chat.id, self.id))
+
+    async def pin(self) -> list[int]:
+        """Pins this message for everybody in the chat: `Bot.pin_message`.
+
+        Returns:
+            The IDs of the messages pinned in the chat now.
+
+        Raises:
+            ForbiddenError: The bot may not pin messages here.
+            RuntimeError: The message was not handed out by a `Bot`.
+        """
+        pinned: list[int] = await _need(self._bot).pin_message(self.chat.id, self.id)
+        return pinned
+
+    async def unpin(self) -> list[int]:
+        """Unpins this message: `Bot.unpin_message`.
+
+        Returns:
+            The IDs of the messages still pinned in the chat.
+
+        Raises:
+            ForbiddenError: The bot may not unpin messages here.
+            RuntimeError: The message was not handed out by a `Bot`.
+        """
+        pinned: list[int] = await _need(self._bot).unpin_message(self.chat.id, self.id)
+        return pinned
+
+    async def forward_to(self, chat: Any, *, hide_sender: bool = False, silent: bool = False) -> SentMessage:
+        """Sends this message on into another chat the bot is in: `Bot.forward_message`.
+
+        In an encrypted chat on either side the bot opens the message and seals it again for
+        the other chat, files included.
+
+        Args:
+            chat: Where to: a chat ID, or a chat object such as ``message.chat``.
+            hide_sender: ``True`` sends a plain copy, without "forwarded from" over it.
+            silent: ``True`` posts without a notification. It only matters in channels.
+
+        Returns:
+            The `SentMessage` the forward became.
+
+        Raises:
+            ValidationError: The message is a comment, or its chat protects its content.
+            RuntimeError: The message was not handed out by a `Bot`.
+        """
+        sent: SentMessage = await _need(self._bot).forward_message(
+            chat, self.chat.id, self, hide_sender=hide_sender, silent=silent
+        )
+        return sent
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2225,6 +3450,8 @@ class SyncMessage(MessageBase):
 
         A send like any other: `SyncBot.send_message` does the work, so the answer is sealed
         and signed when the chat is end-to-end encrypted, and the same errors come out of it.
+        The answer to a comment is a comment under the same post (`SyncBot.send_comment`),
+        which takes no buttons, no ``silent`` and no ``send_id``.
 
         Args:
             text: The answer, with the rules of `SyncBot.send_message`.
@@ -2239,10 +3466,18 @@ class SyncMessage(MessageBase):
             The `SyncSentMessage` as the server stored it, which can be edited or deleted.
 
         Raises:
+            ValidationError: Buttons on the answer to a comment.
             RuntimeError: The message was not handed out by a `SyncBot`, so it has nothing to
                 answer through.
         """
-        return _need(self._bot).send_message(  # type: ignore[no-any-return]
+        bot = _need(self._bot)
+        if self.thread_root is not None:
+            if markup is not None:
+                raise ValidationError("a comment carries no buttons", field="markup")
+            return bot.send_comment(  # type: ignore[no-any-return]
+                self.chat.id, self.thread_root, text, reply_to=self.id if quote else None, encrypt=encrypt
+            )
+        return bot.send_message(  # type: ignore[no-any-return]
             self.chat.id,
             text,
             reply_to=self.id if quote else None,
@@ -2280,7 +3515,10 @@ class SyncMessage(MessageBase):
         return self.reply(text, markup=markup, quote=False, silent=silent, encrypt=encrypt, send_id=send_id)
 
     def delete(self) -> bool:
-        """Deletes this message for everyone. Needs the *delete messages* right in a group.
+        """Deletes this message for everyone.
+
+        Anybody's in a private chat; in a group or channel, it needs the *delete messages*
+        right (a comment, the *manage comments* right).
 
         Returns:
             ``True`` once the message is gone.
@@ -2305,6 +3543,79 @@ class SyncMessage(MessageBase):
             RuntimeError: The message was not handed out by a `SyncBot`.
         """
         return bool(_need(self._bot).send_typing(self.chat.id, typing))
+
+    def react(self, emoji: str) -> MessageReactions:
+        """Puts the bot's reaction on this message, in place of the one it had: `SyncBot.set_reaction`.
+
+        Args:
+            emoji: The emoji, or a custom emoji as the app writes it.
+
+        Returns:
+            Every reaction on the message now.
+
+        Raises:
+            ForbiddenError: Reactions are off here, the chat does not take this emoji, or the
+                bot may not react.
+            RuntimeError: The message was not handed out by a `SyncBot`.
+        """
+        return _need(self._bot).set_reaction(self.chat.id, self.id, emoji)  # type: ignore[no-any-return]
+
+    def remove_reaction(self) -> bool:
+        """Takes the bot's reaction off this message: `SyncBot.remove_reaction`.
+
+        Returns:
+            ``True`` when there was one, ``False`` when the bot had none there.
+
+        Raises:
+            RuntimeError: The message was not handed out by a `SyncBot`.
+        """
+        return bool(_need(self._bot).remove_reaction(self.chat.id, self.id))
+
+    def pin(self) -> list[int]:
+        """Pins this message for everybody in the chat: `SyncBot.pin_message`.
+
+        Returns:
+            The IDs of the messages pinned in the chat now.
+
+        Raises:
+            ForbiddenError: The bot may not pin messages here.
+            RuntimeError: The message was not handed out by a `SyncBot`.
+        """
+        return _need(self._bot).pin_message(self.chat.id, self.id)  # type: ignore[no-any-return]
+
+    def unpin(self) -> list[int]:
+        """Unpins this message: `SyncBot.unpin_message`.
+
+        Returns:
+            The IDs of the messages still pinned in the chat.
+
+        Raises:
+            ForbiddenError: The bot may not unpin messages here.
+            RuntimeError: The message was not handed out by a `SyncBot`.
+        """
+        return _need(self._bot).unpin_message(self.chat.id, self.id)  # type: ignore[no-any-return]
+
+    def forward_to(self, chat: Any, *, hide_sender: bool = False, silent: bool = False) -> SyncSentMessage:
+        """Sends this message on into another chat the bot is in: `SyncBot.forward_message`.
+
+        In an encrypted chat on either side the bot opens the message and seals it again for
+        the other chat, files included.
+
+        Args:
+            chat: Where to: a chat ID, or a chat object such as ``message.chat``.
+            hide_sender: ``True`` sends a plain copy, without "forwarded from" over it.
+            silent: ``True`` posts without a notification. It only matters in channels.
+
+        Returns:
+            The `SyncSentMessage` the forward became.
+
+        Raises:
+            ValidationError: The message is a comment, or its chat protects its content.
+            RuntimeError: The message was not handed out by a `SyncBot`.
+        """
+        return _need(self._bot).forward_message(  # type: ignore[no-any-return]
+            chat, self.chat.id, self, hide_sender=hide_sender, silent=silent
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2366,6 +3677,32 @@ class SentMessage(SentMessageBase):
         """
         return bool(await _need(self._bot).delete_message(self.chat.id, self.id))
 
+    async def pin(self) -> list[int]:
+        """Pins this message for everybody in the chat: `Bot.pin_message`.
+
+        Returns:
+            The IDs of the messages pinned in the chat now.
+
+        Raises:
+            ForbiddenError: The bot may not pin messages here.
+            RuntimeError: The message did not come from a `Bot`.
+        """
+        pinned: list[int] = await _need(self._bot).pin_message(self.chat.id, self.id)
+        return pinned
+
+    async def unpin(self) -> list[int]:
+        """Unpins this message: `Bot.unpin_message`.
+
+        Returns:
+            The IDs of the messages still pinned in the chat.
+
+        Raises:
+            ForbiddenError: The bot may not unpin messages here.
+            RuntimeError: The message did not come from a `Bot`.
+        """
+        pinned: list[int] = await _need(self._bot).unpin_message(self.chat.id, self.id)
+        return pinned
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SyncSentMessage(SentMessageBase):
@@ -2425,6 +3762,30 @@ class SyncSentMessage(SentMessageBase):
             RuntimeError: The message did not come from a `SyncBot`.
         """
         return bool(_need(self._bot).delete_message(self.chat.id, self.id))
+
+    def pin(self) -> list[int]:
+        """Pins this message for everybody in the chat: `SyncBot.pin_message`.
+
+        Returns:
+            The IDs of the messages pinned in the chat now.
+
+        Raises:
+            ForbiddenError: The bot may not pin messages here.
+            RuntimeError: The message did not come from a `SyncBot`.
+        """
+        return _need(self._bot).pin_message(self.chat.id, self.id)  # type: ignore[no-any-return]
+
+    def unpin(self) -> list[int]:
+        """Unpins this message: `SyncBot.unpin_message`.
+
+        Returns:
+            The IDs of the messages still pinned in the chat.
+
+        Raises:
+            ForbiddenError: The bot may not unpin messages here.
+            RuntimeError: The message did not come from a `SyncBot`.
+        """
+        return _need(self._bot).unpin_message(self.chat.id, self.id)  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -14,7 +14,7 @@ Example:
 
         async with AsyncClient() as api:
             me = await api.get_me()
-            await api.send_message(7781, "hello")
+            await api.send_message("48213907", "hello")
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import time
 import uuid
 from asyncio import get_running_loop
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping
+from datetime import datetime
 from types import TracebackType
 from typing import Any, Self, TypeVar, overload
 from urllib.parse import urlsplit
@@ -51,6 +52,8 @@ from ._http import (
 )
 from ._http import user_agent as default_user_agent
 from ._secrets import Secret, read_env, resolve
+from ._spec import MediaLike, StickerLike
+from ._validate import UPLOAD_MAX
 from .errors import (
     APIError,
     ConfigurationError,
@@ -65,19 +68,30 @@ from .errors import (
 from .keyboard import InlineKeyboard
 from .models import (
     KEEP,
+    Ban,
     BotInfo,
+    ChannelStats,
     Chat,
     ChatKeys,
     ChatKind,
     ChatMembers,
     Command,
     CommandScope,
+    Comments,
+    Invite,
+    JoinRequest,
     Media,
     Member,
+    MessageBase,
+    MessageReactions,
+    Picture,
+    Profile,
     PublishedKey,
     Resolved,
     SentMessageBase,
+    Sticker,
     Update,
+    UploadedFile,
     UserKey,
     WebhookInfo,
 )
@@ -159,12 +173,13 @@ class _Base:
         }
 
     def _timeout_for(self, call: Call[Any]) -> httpx2.Timeout:
-        if call.read_timeout is None:
+        if call.read_timeout is None and call.write_timeout is None:
             return self.timeout
+        read, write = self.timeout.read, self.timeout.write
         return httpx2.Timeout(
             connect=self.timeout.connect,
-            read=max(call.read_timeout, self.timeout.read or 0.0),
-            write=self.timeout.write,
+            read=max(call.read_timeout, read or 0.0) if call.read_timeout is not None else read,
+            write=max(call.write_timeout, write or 0.0) if call.write_timeout is not None else write,
             pool=self.timeout.pool,
         )
 
@@ -174,6 +189,7 @@ class _Base:
             call.url(self.api_url),
             params=call.params,
             json=call.body if call.has_body else None,
+            files=call.files,
             headers=self._headers(),
             timeout=self._timeout_for(call),
         )
@@ -274,7 +290,8 @@ class AsyncClient(_Base):
     cannot be pickled.
 
     Attributes:
-        bot_id (int): The bot's user ID, read from the token.
+        bot_id (int): The number in the token. It is not the bot's ID, which `get_me` gives
+            (``"B48213907"``), and a token made before IDs became strings carries the old number.
         api_url (str): The server's address, without ``/bot/v1`` and the trailing slash.
         timeout (httpx2.Timeout): The timeouts of every request, made from ``timeout``.
         retry (RetryPolicy): The retry rules in use.
@@ -288,7 +305,7 @@ class AsyncClient(_Base):
 
             async with AsyncClient() as api:          # token from HIDESAY_BOT_TOKEN
                 me = await api.get_me()
-                await api.send_message(7781, f"Hello from @{me.username}")
+                await api.send_message("48213907", f"Hello from @{me.username}")
     """
 
     def __init__(
@@ -818,6 +835,9 @@ class AsyncClient(_Base):
         markup: InlineKeyboard | Mapping[str, Any] | None = None,
         silent: bool | None = None,
         send_id: str | uuid.UUID | None = None,
+        media: MediaLike | Iterable[MediaLike] | None = None,
+        sticker: StickerLike | None = None,
+        mentions: Iterable[str | int] | None = None,
         chat_kind: ChatKind | None = None,
     ) -> SentMessageBase:
         """Sends a message: ``text`` into a readable chat, ``armored`` into an encrypted one.
@@ -827,14 +847,24 @@ class AsyncClient(_Base):
         chat, seal the message to every key of `get_chat_keys` and to the bot's own key, and
         sign it. `BotKey.seal` adds the bot's key and the signature for you.
 
+        Into a readable chat it also sends files (``media``, uploaded first with `upload_file`,
+        ``text`` being the caption) or a ``sticker``; the server writes the envelope the phones
+        read. In an encrypted chat files and stickers travel inside the armor: `Bot.send_media`
+        and `Bot.send_sticker` do it.
+
         Before sending, it checks what the server would refuse:
 
         - the chat is an ID like ``"G48213907"``, ``"C48213907"`` or a person's
           ``"48213907"``, and ``reply_to`` a positive integer;
         - ``text`` is not blank, has at most 4096 UTF-16 code units, and no control characters
-          but newline and tab (carriage returns become newlines first);
+          but newline and tab (carriage returns become newlines first); as a caption it may be
+          blank, and is then left out;
         - ``armored`` holds ``-----BEGIN PGP MESSAGE-----`` and has at most 131072 characters;
+        - ``media`` holds 1 to 10 files described as the server's envelope wants them, and an
+          album of more than one only pictures and videos;
+        - a ``sticker`` comes alone, without text;
         - ``markup`` follows the rules of `InlineKeyboard`;
+        - ``mentions`` are at most 20 user IDs;
         - ``send_id``, when given, is a UUID.
 
         The client paces the sends: by default one a second into a private chat, 20 a minute
@@ -856,6 +886,15 @@ class AsyncClient(_Base):
             send_id: A UUID that names this send, as a string or a `uuid.UUID`. ``None`` makes
                 a new one. Pass your own to repeat the send safely later, after a crash for
                 example.
+            media: Readable chats: the files to send, one or an album of 2 to 10 pictures and
+                clips, each a `MediaIn` or a dict in the API's form, with the ID `upload_file`
+                gave. ``text`` is the caption.
+            sticker: Readable chats: a sticker, as its ID, a `Sticker` or a dict with ``id``
+                and ``mediaId``. The file ID proves the bot was shown a sticker of a pack that
+                is not public.
+            mentions: Groups: the IDs of the people the words tag (``@[Anna](u48213907)``), up
+                to 20, so they are told even with the group muted, as for a person's tag.
+                Somebody not in the group is dropped.
             chat_kind: The `ChatKind` of the chat, for the rate limiter only: groups and
                 channels are paced per minute. ``None`` paces it like a private chat.
 
@@ -866,9 +905,14 @@ class AsyncClient(_Base):
             ValidationError: An argument breaks one of the rules above, or both or neither of
                 ``text`` and ``armored`` were given.
             WrongBodyKindError: ``text`` into an encrypted chat, or ``armored`` into a readable
-                one. ``expected`` says which one the chat wants.
+                one, or files or a sticker into an encrypted one. ``expected`` says which one
+                the chat wants.
+            BadMediaError: A file is not one this bot uploaded, or the server refused how it is
+                described.
+            StickerNotFoundError: No such sticker, or one the bot may not send.
             BadMarkupError: The server refused the keyboard.
-            ForbiddenError: The bot may not write in this chat.
+            ForbiddenError: The bot may not write in this chat, or send files or voice notes in
+                this group.
             BlockedByUserError: The person blocked the bot.
             UserGoneError: The person closed their account.
             ChatNotFoundError: No such chat, or the bot is not in it.
@@ -880,8 +924,14 @@ class AsyncClient(_Base):
         Examples:
             Into a readable chat::
 
-                sent = await api.send_message(7781, "Backup finished.")
+                sent = await api.send_message("48213907", "Backup finished.")
                 print(sent.id, sent.date)
+
+            A picture, uploaded first::
+
+                up = await api.upload_file(jpeg)
+                media = MediaIn(id=up.id, kind="image", mime="image/jpeg", width=1280, height=720)
+                await api.send_message(chat_id, "The view from here", media=[media])
 
             Into an encrypted group, sealed by hand::
 
@@ -899,6 +949,9 @@ class AsyncClient(_Base):
                 markup=markup,
                 silent=silent,
                 send_id=send_id,
+                media=media,
+                sticker=sticker,
+                mentions=mentions,
                 chat_kind=chat_kind,
             )
         )
@@ -915,9 +968,12 @@ class AsyncClient(_Base):
     ) -> SentMessageBase:
         """Changes the text, the buttons, or both, of one of the bot's own messages.
 
-        Calls ``PATCH /messages/{messageId}``. Only the bot's own ordinary messages can be
-        edited, at any age, and people see the edit live. The new body follows the rules of
-        `send_message`: ``text`` in a readable chat, ``armored`` in an encrypted one. Before
+        Calls ``PATCH /messages/{messageId}``. The bot edits its own ordinary messages, at any
+        age, and people see the edit live. In a channel where it may edit posts it edits
+        anybody's post too, the words only: buttons are only ever the sender's. On a file or an
+        album of a readable chat, ``text`` is the new caption and the files stay. The new body
+        follows the rules of `send_message`: ``text`` in a readable chat, ``armored`` in an
+        encrypted one. Before
         sending, it checks the IDs, the body and the keyboard, and that there is something to
         change. Edits are paced with the same numbers as sends, counted on their own; the 30 a
         second in all is shared with sends. Retried after a network error or a ``5xx`` answer:
@@ -943,7 +999,8 @@ class AsyncClient(_Base):
             WrongBodyKindError: ``text`` into an encrypted chat, or ``armored`` into a readable
                 one. ``expected`` says which one the chat wants.
             BadMarkupError: The server refused the keyboard.
-            ForbiddenError: Not the bot's message, or not an ordinary one (a service notice).
+            ForbiddenError: Not the bot's message (nor a channel post it may edit), not an
+                ordinary one (a service notice), or new buttons on somebody else's post.
             BlockedByUserError: In a private chat, the person blocked the bot.
             UserGoneError: In a private chat, the person closed their account.
             ChatNotFoundError: No such chat, or the bot is not in it.
@@ -962,10 +1019,12 @@ class AsyncClient(_Base):
     async def delete_message(self, chat_id: str | int, message_id: int) -> bool:
         """Deletes a message for everyone, for good.
 
-        Calls ``DELETE /messages/{messageId}``, with ``chatId`` in the query. The bot can
-        delete its own messages anywhere, and other people's in a group or channel where it
-        has the "delete messages" right. Secret messages and service notices cannot be
-        deleted. Before sending, it checks that both IDs are positive integers.
+        Calls ``DELETE /messages/{messageId}``, with ``chatId`` in the query. The bot deletes
+        any message of a private chat, as either person can there; in a group or channel its
+        own, anybody's where it has the *delete messages* right, and anybody's comment with the
+        *manage comments* right. A post takes its comments with it. Only messages the bot was
+        handed; secret messages and service notices cannot be deleted. Before sending, it
+        checks the chat and the message ID. `delete_messages` deletes up to 100 at once.
 
         Retried after a network error or a ``5xx`` answer. If an earlier answer was lost and
         the retry gets ``message_not_found``, the first try did delete the message, and the
@@ -1041,8 +1100,8 @@ class AsyncClient(_Base):
 
         Calls ``GET /chats/{chatId}``. ``mode`` tells which body to send: ``text`` in an
         ``open`` chat, ``armored`` in a ``protected`` one. A private chat also carries the
-        other person and whether they blocked the bot. Before sending, it checks that
-        ``chat_id`` is a positive integer. Retried after a network error or a ``5xx`` answer.
+        other person and whether they blocked the bot. Before sending, it checks the shape of
+        ``chat_id``. Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: The chat.
@@ -1068,8 +1127,8 @@ class AsyncClient(_Base):
         Calls ``GET /chats/{chatId}/keys``. The answer holds the keys of the people in the
         chat, IDs and keys only, no names. The bot's own key is not in it: add it yourself
         (`BotKey.seal` does). Other bots that only receive what is addressed to them are left
-        out, as they are for the app. Before sending, it checks that ``chat_id`` is a positive
-        integer. Retried after a network error or a ``5xx`` answer.
+        out, as they are for the app. Before sending, it checks the shape of ``chat_id``.
+        Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: An encrypted chat the bot is in.
@@ -1101,8 +1160,7 @@ class AsyncClient(_Base):
         Calls ``GET /chats/{chatId}/members``. Where the member list is hidden, a bot that is
         not an admin sees the admins only, and a channel that keeps its admins to itself
         leaves them out. Names and handles only, never phone numbers. Before sending, it checks
-        that ``chat_id`` is a positive integer. Retried after a network error or a ``5xx``
-        answer.
+        the shape of ``chat_id``. Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: A group or channel the bot is in.
@@ -1126,8 +1184,8 @@ class AsyncClient(_Base):
     async def get_chat_member(self, chat_id: str | int, user_id: str | int) -> Member:
         """Fetches one member's seat in a group or channel.
 
-        Calls ``GET /chats/{chatId}/members/{userId}``. Before sending, it checks that both IDs
-        are positive integers. Retried after a network error or a ``5xx`` answer.
+        Calls ``GET /chats/{chatId}/members/{userId}``. Before sending, it checks the shape of
+        both IDs. Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: A group or channel the bot is in.
@@ -1156,7 +1214,7 @@ class AsyncClient(_Base):
 
         Calls ``POST /chats/{chatId}/leave``. The chat is told, the way it would be about a
         person. A bot cannot leave a private chat; the person can block it. Before sending, it
-        checks that ``chat_id`` is a positive integer.
+        checks the shape of ``chat_id``.
 
         Retried after a network error or a ``5xx`` answer. If an earlier answer was lost and
         the retry finds no chat, the first try worked, and the method returns ``True``.
@@ -1178,9 +1236,9 @@ class AsyncClient(_Base):
 
         Calls ``POST /chats/{chatId}/typing``. The indicator clears on its own after a few
         seconds, or when a message lands. One goes out per chat every 3 seconds at most; calls
-        in between show nothing and return ``False``. Before sending, it checks that
-        ``chat_id`` is a positive integer. Not retried after a network error or a ``5xx``
-        answer: a late indicator is useless.
+        in between show nothing and return ``False``. Before sending, it checks the shape of
+        ``chat_id``. Not retried after a network error or a ``5xx`` answer: a late indicator is
+        useless.
 
         Args:
             chat_id: A chat the bot may write in.
@@ -1216,7 +1274,7 @@ class AsyncClient(_Base):
 
         It finds anybody with a public handle, which is no more than the short link already
         shows a stranger with a browser. The ID on its own unlocks nothing: sending still needs
-        the bot to be in the chat, and `AsyncClient.get_user_key` still needs a chat in common.
+        the bot to be in the chat, and `AsyncClient.get_user_key` still needs somebody the bot may look up.
 
         Args:
             username: The handle, with or without the ``@``.
@@ -1243,10 +1301,9 @@ class AsyncClient(_Base):
     async def get_user_key(self, user_id: str | int) -> UserKey:
         """Fetches one person's public key.
 
-        Calls ``GET /users/{userId}/key``. It works only for someone the bot shares a chat
-        with: anyone else is `UserNotFoundError`, whether or not they exist. Before sending, it
-        checks that ``user_id`` is a positive integer. Retried after a network error or a
-        ``5xx`` answer.
+        Calls ``GET /users/{userId}/key``. It works only for someone the bot may look up,
+        as for ``get_user``: anyone else is `UserNotFoundError`, whether or not they exist. Before sending, it
+        checks the shape of ``user_id``. Retried after a network error or a ``5xx`` answer.
 
         Args:
             user_id: The person.
@@ -1256,7 +1313,7 @@ class AsyncClient(_Base):
             public key.
 
         Raises:
-            UserNotFoundError: No such person, or no chat in common with the bot.
+            UserNotFoundError: No such person, or nobody the bot may look up.
             NoUserKeyError: The person never published a key.
 
         Example:
@@ -1314,6 +1371,963 @@ class AsyncClient(_Base):
                 data = validate_web_bot_data(init_data, bot_id=me.id, public_key=key)
         """
         return await self.execute(_spec.get_web_bot_key())
+
+    # --- more on messages ---
+
+    async def delete_messages(self, chat_id: str | int, message_ids: Iterable[int]) -> list[int]:
+        """Deletes up to 100 messages of one chat at once, for everyone, for good.
+
+        Calls ``POST /messages/delete``, with the rules of `delete_message` for each message:
+        anything in a private chat; in a group or channel the bot's own, anybody's with the
+        *delete messages* right, anybody's comment with the *manage comments* right. A post
+        takes its comments with it. IDs that are not of this chat, or that the bot was never
+        handed, are left out. If one message is not the bot's to delete, nothing is deleted.
+        Before sending, it checks the chat and that there are 1 to 100 positive IDs. Retried
+        after a network error or a ``5xx`` answer: a repeat leaves out what is already gone.
+
+        Args:
+            chat_id: The chat the messages are in.
+            message_ids: The messages, 1 to 100 IDs.
+
+        Returns:
+            The IDs that went, the comments taken with their posts included.
+
+        Raises:
+            ValidationError: No IDs, more than 100, or one that is not a positive integer.
+            ForbiddenError: One of the messages is not the bot's to delete. Nothing was deleted.
+            ChatNotFoundError: No such chat, or the bot is not in it.
+
+        Example:
+            Clear what a flood left behind::
+
+                gone = await api.delete_messages("G48213907", [90213, 90214, 90215])
+        """
+        return await self.execute(_spec.delete_messages(chat_id, message_ids))
+
+    async def forward_message(
+        self,
+        chat_id: str | int,
+        from_chat_id: str | int,
+        message_id: int,
+        *,
+        hide_sender: bool | None = None,
+        silent: bool | None = None,
+        send_id: str | uuid.UUID | None = None,
+        chat_kind: ChatKind | None = None,
+    ) -> SentMessageBase:
+        """Sends a message the bot was handed on into another chat it is in.
+
+        Calls ``POST /messages/forward``. The forward carries "forwarded from" over it: the
+        person, or the channel and its post. A forward of a forward keeps the first origin.
+        Files go along: the server copies them for the bot, so the forward outlives the
+        original. A chat that protects its content does not let its messages out, and
+        comments are not forwarded.
+
+        The server forwards only from a readable chat into a readable chat. A message from, or
+        into, an end-to-end encrypted chat answers `ChatIsProtectedError`: the bot has to open
+        it and seal it again itself, which is what `Bot.forward_message` does.
+
+        Like a send it carries a ``sendId``, so it is retried after a network error or a
+        ``5xx`` answer without forwarding twice, and it is paced like a send into the target.
+
+        Args:
+            chat_id: Where to forward it.
+            from_chat_id: The chat the message is in.
+            message_id: The message.
+            hide_sender: ``True`` sends a plain copy, without "forwarded from".
+            silent: Channels only: ``True`` posts without a notification.
+            send_id: A UUID that names this forward. ``None`` makes a new one.
+            chat_kind: The `ChatKind` of the target, for the rate limiter only. ``None`` reads
+                it from the ID.
+
+        Returns:
+            The forward, as the server stored it.
+
+        Raises:
+            ChatIsProtectedError: One of the two chats is end-to-end encrypted, or the message
+                is.
+            ForbiddenError: The bot may not write in the target, or the source protects its
+                content.
+            BlockedByUserError: The person on the other side of the target blocked the bot.
+            ChatNotFoundError: One of the chats does not exist, or the bot is not in it.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+            BadRequestError: The message is a comment.
+        """
+        return await self.execute(
+            _spec.forward_message(
+                chat_id,
+                from_chat_id,
+                message_id,
+                hide_sender=hide_sender,
+                silent=silent,
+                send_id=send_id,
+                chat_kind=chat_kind,
+            )
+        )
+
+    async def set_reaction(self, chat_id: str | int, message_id: int, emoji: str) -> MessageReactions:
+        """Puts the bot's reaction on a message, in place of the one it had there.
+
+        Calls ``PUT /messages/{messageId}/reaction``. One reaction per message, as for everybody.
+        A custom emoji goes as the app writes it. The rules of a person's reaction hold: in a
+        private chat nobody blocked anybody; in a group or channel reactions are on, the emoji
+        is one the chat takes (`Chat.allowed_reactions`) and the bot may react. Only messages
+        the bot was handed. Before sending, it checks that ``emoji`` is 1 to 48 characters once
+        trimmed. Retried after a network error or a ``5xx`` answer: the same reaction twice is
+        one reaction.
+
+        Args:
+            chat_id: The chat the message is in.
+            message_id: The message.
+            emoji: The emoji.
+
+        Returns:
+            Every reaction on the message now, the bot's marked ``mine``.
+
+        Raises:
+            ValidationError: ``emoji`` is empty or too long.
+            ForbiddenError: Reactions are off, the chat does not take this emoji, or the bot
+                may not react.
+            BlockedByUserError: In a private chat, the person blocked the bot.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+
+        Example:
+            Say "seen" without writing::
+
+                await api.set_reaction(chat_id, message_id, "👀")
+        """
+        return await self.execute(_spec.set_reaction(chat_id, message_id, emoji))
+
+    async def remove_reaction(self, chat_id: str | int, message_id: int) -> bool:
+        """Takes the bot's reaction off a message.
+
+        Calls ``DELETE /messages/{messageId}/reaction``, with ``chatId`` in the query. Retried
+        after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat the message is in.
+            message_id: The message.
+
+        Returns:
+            ``True`` when the bot had a reaction there, ``False`` when it had none.
+
+        Raises:
+            BlockedByUserError: In a private chat, the person blocked the bot.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        return await self.execute(_spec.remove_reaction(chat_id, message_id))
+
+    # --- files and stickers ---
+
+    async def upload_file(self, data: bytes, *, limit: int = UPLOAD_MAX) -> UploadedFile:
+        """Uploads a file for a message.
+
+        Calls ``POST /attachments``, as ``multipart/form-data`` with the bytes in a field called
+        ``file``. The server takes up to 50 MB, 30 uploads a minute. The file goes up as it is,
+        under a neutral name and type: say what it is when you send it.
+
+        Into a readable chat, upload the file as it is and pass its ID in the ``media`` of
+        `send_message`. Into an encrypted chat, upload it already sealed to the chat's keys and
+        the bot's own, and put its ID in the envelope inside the ``armored`` body.
+        `Bot.send_media` does either. Retried after a network error or a ``5xx`` answer; a lost
+        answer leaves an extra copy on the server that no message points at.
+
+        Args:
+            data: The file's bytes.
+            limit: The largest file accepted, in bytes. 50 MiB by default, the server's limit
+                (`Limits.upload_bytes_max`).
+
+        Returns:
+            The file's ID, its address and the size the server stored.
+
+        Raises:
+            ValidationError: ``data`` is not bytes, or is larger than ``limit``.
+            PayloadTooLargeError: The server's limit is lower.
+            FloodWaitError: More than 30 uploads this minute.
+            ServerError: ``try_again``: the server is short of disk right now.
+        """
+        return await self.execute(_spec.upload_file(data, limit=limit))
+
+    async def get_sticker(self, sticker_id: int, media_id: str | None = None) -> Sticker:
+        """Fetches a sticker the bot may send.
+
+        Calls ``GET /stickers/{stickerId}``. A sticker of a public pack, or one the bot was
+        shown: pass the ``media_id`` a message carried for it as proof. For a readable chat,
+        `send_message` needs only the ID; for an encrypted chat this is what goes in the
+        envelope. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            sticker_id: The sticker's ID.
+            media_id: The sticker's file ID, as a message carried it, for a pack that is not
+                public.
+
+        Returns:
+            The sticker.
+
+        Raises:
+            StickerNotFoundError: No such sticker, or one of a pack the bot can't use.
+        """
+        return await self.execute(_spec.get_sticker(sticker_id, media_id))
+
+    # --- chats and history ---
+
+    async def get_chats(self) -> list[Chat]:
+        """Lists the groups and channels the bot is in.
+
+        Calls ``GET /chats``. Each one as `get_chat` describes it, the bot's seat included.
+        Private chats are not listed: they are the people who wrote to the bot. Retried after
+        a network error or a ``5xx`` answer.
+
+        Returns:
+            The groups and channels.
+
+        Example:
+            Where the bot may not read everything::
+
+                for chat in await api.get_chats():
+                    if not chat.reads_all:
+                        print(chat.title, "only sends me what is meant for me")
+        """
+        chats: list[Chat] = await self.execute(_spec.get_chats())
+        return chats
+
+    async def get_history(
+        self, chat_id: str | int, *, before: int | None = None, limit: int | None = None
+    ) -> list[MessageBase]:
+        """Fetches what the bot was handed in a chat, newest first.
+
+        Calls ``GET /chats/{chatId}/messages``. In a private chat that is every message of it.
+        In a group or channel it is the bot's own messages and the ones the room delivered to
+        it, and nothing else: what it was not let read stays out, even after the room lets it
+        read everything. Comments are not listed here, see `get_comments`. The messages come
+        as the server keeps them: in an encrypted chat ``armored``, which `Bot.get_history`
+        decrypts. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            before: The oldest ID you hold, for the next page back. ``None`` for the newest.
+            limit: How many, 1 to 100. ``None`` leaves it to the server, which gives 50.
+
+        Returns:
+            The messages, newest first. Empty when there are none.
+
+        Raises:
+            ValidationError: ``before`` or ``limit`` out of range.
+            ChatNotFoundError: No such chat, or the bot is not in it.
+
+        Example:
+            Every page, back to the start::
+
+                page = await api.get_history(chat_id, limit=100)
+                while page:
+                    store(page)
+                    page = await api.get_history(chat_id, before=page[-1].id, limit=100)
+        """
+        messages: list[MessageBase] = await self.execute(_spec.get_history(chat_id, before=before, limit=limit))
+        return messages
+
+    async def get_message(self, chat_id: str | int, message_id: int) -> MessageBase:
+        """Fetches one message the bot was handed.
+
+        Calls ``GET /chats/{chatId}/messages/{messageId}``. The rule of `get_history` holds: a
+        message the bot was not handed answers like one that doesn't exist. Retried after a
+        network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            message_id: The message.
+
+        Returns:
+            The message, as the server keeps it.
+
+        Raises:
+            ChatNotFoundError: No such chat, or the bot is not in it.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        return await self.execute(_spec.get_message(chat_id, message_id))
+
+    async def read_chat(self, chat_id: str | int, up_to: int | None = None) -> int | None:
+        """Marks a chat read: the ticks people see.
+
+        Calls ``POST /chats/{chatId}/read``. In a group or channel only a bot the room lets read
+        every message may do it: one that gets only what is meant for it would show up as
+        having read people it never saw. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            up_to: The newest message read. ``None`` marks everything.
+
+        Returns:
+            The ID of the last message marked read, or ``None`` when the server did not say.
+
+        Raises:
+            ReadsAllNeededError: A group or channel that does not let the bot read every
+                message.
+            ChatNotFoundError: No such chat, or the bot is not in it.
+        """
+        return await self.execute(_spec.read_chat(chat_id, up_to))
+
+    async def pin_message(self, chat_id: str | int, message_id: int) -> list[int]:
+        """Pins a message for everybody in the chat.
+
+        Calls ``PUT /chats/{chatId}/pins/{messageId}``. In a group or channel it needs the *pin
+        messages* right, or the members' permission to pin. In a private chat it is pinned for
+        the person too, and the chat says so with a notice; up to 100. Only messages the bot
+        was handed, not notices. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            message_id: The message.
+
+        Returns:
+            The IDs of the messages pinned in the chat now.
+
+        Raises:
+            ForbiddenError: The bot may not pin messages here.
+            BlockedByUserError: In a private chat, the person blocked the bot.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        pinned: list[int] = await self.execute(_spec.pin_message(chat_id, message_id))
+        return pinned
+
+    async def unpin_message(self, chat_id: str | int, message_id: int) -> list[int]:
+        """Unpins a message.
+
+        Calls ``DELETE /chats/{chatId}/pins/{messageId}``, with the rights of `pin_message`.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            message_id: The message.
+
+        Returns:
+            The IDs of the messages still pinned in the chat.
+
+        Raises:
+            ForbiddenError: The bot may not unpin messages here.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        pinned: list[int] = await self.execute(_spec.unpin_message(chat_id, message_id))
+        return pinned
+
+    async def unpin_all(self, chat_id: str | int) -> list[int]:
+        """Unpins every message of a group or channel.
+
+        Calls ``DELETE /chats/{chatId}/pins``, with the rights of `pin_message`. Not for a
+        private chat: the person's own pins there are not the bot's to clear. Retried after a
+        network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The IDs still pinned: none.
+
+        Raises:
+            ValidationError: ``chat_id`` is a private chat.
+            ForbiddenError: The bot may not unpin messages here.
+        """
+        pinned: list[int] = await self.execute(_spec.unpin_all(chat_id))
+        return pinned
+
+    async def get_comments(
+        self, chat_id: str | int, post_id: int, *, before: int | None = None, limit: int | None = None
+    ) -> Comments:
+        """Fetches the comments the bot was handed under a channel post, newest first.
+
+        Calls ``GET /chats/{chatId}/posts/{postId}/comments``. The rule of `get_history` holds.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+            post_id: The post, one the bot was handed.
+            before: The oldest comment ID you hold, for the next page back.
+            limit: How many, 1 to 100. ``None`` leaves it to the server, which gives 50.
+
+        Returns:
+            The comments, and whether the post takes comments right now.
+
+        Raises:
+            ValidationError: ``chat_id`` is not a channel, or ``before`` or ``limit`` is out of
+                range.
+            MessageNotFoundError: No such post, or one the bot was never handed.
+        """
+        return await self.execute(_spec.get_comments(chat_id, post_id, before=before, limit=limit))
+
+    async def send_comment(
+        self,
+        chat_id: str | int,
+        post_id: int,
+        text: str | None = None,
+        *,
+        armored: str | None = None,
+        reply_to: int | None = None,
+        as_author: bool | None = None,
+        mentions: Iterable[str | int] | None = None,
+    ) -> SentMessageBase:
+        """Comments under a channel post.
+
+        Calls ``POST /chats/{chatId}/posts/{postId}/comments``, with the rules of a person's
+        comment: the channel's comments are on and this post's are not closed, a member whose
+        voice was taken away stays quiet, and ``reply_to`` points at a comment of the same
+        post or is dropped. ``text`` in a readable channel, ``armored`` in an encrypted one,
+        sealed to the channel's keys. A bot that runs the channel speaks as the channel unless
+        the channel lets its admins sign and ``as_author`` is ``True``.
+
+        The server keeps no ``sendId`` for comments, so a comment is not repeated after a
+        network error: a lost answer could otherwise write it twice. It is paced like a send
+        into the channel.
+
+        Args:
+            chat_id: The channel.
+            post_id: The post, one the bot was handed.
+            text: The comment, for a readable channel.
+            armored: The sealed comment, for an encrypted channel.
+            reply_to: A comment of the same post to answer.
+            as_author: ``True`` signs the comment with the bot's own name, where the channel
+                allows it.
+            mentions: The IDs of the people the words tag, up to 20, so they are told even with
+                the comments muted.
+
+        Returns:
+            The comment, as the server stored it.
+
+        Raises:
+            ValidationError: ``chat_id`` is not a channel, a body breaks a rule, or both or
+                neither of ``text`` and ``armored`` were given.
+            WrongBodyKindError: ``text`` into an encrypted channel, or ``armored`` into a
+                readable one.
+            CommentsClosedError: The channel takes no comments, or this post doesn't.
+            ForbiddenError: The bot may not comment here.
+            MessageNotFoundError: No such post, or one the bot was never handed.
+        """
+        return await self.execute(
+            _spec.send_comment(
+                chat_id, post_id, text, armored=armored, reply_to=reply_to, as_author=as_author, mentions=mentions
+            )
+        )
+
+    async def get_user(self, user_id: str | int) -> Profile:
+        """Fetches somebody's public profile.
+
+        Calls ``GET /users/{userId}``. Only for somebody the bot may look up: a private chat
+        with them, a room whose member list shows them to the bot, or a room where their words
+        reached it. The same gate as their key. No phone number, no presence. Somebody who blocked the bot keeps
+        their pictures to themselves. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            user_id: The person, or a bot.
+
+        Returns:
+            The profile.
+
+        Raises:
+            UserNotFoundError: No such person, or nobody the bot may look up.
+        """
+        return await self.execute(_spec.get_user(user_id))
+
+    # --- running a group or channel ---
+
+    async def update_chat(
+        self,
+        chat_id: str | int,
+        *,
+        title: str | None = None,
+        description: str | None = KEEP,
+        permissions: Mapping[str, bool] | None = None,
+        slow_mode_seconds: int | None = None,
+        members_hidden: bool | None = None,
+        protect_content: bool | None = None,
+        reactions_enabled: bool | None = None,
+        allowed_reactions: Iterable[str] | None = KEEP,
+        auto_delete_seconds: int | None = None,
+        signatures: bool | None = None,
+        signature_profiles: bool | None = None,
+        admins_hidden: bool | None = None,
+    ) -> Chat:
+        """Changes the settings of a group or channel.
+
+        Calls ``PATCH /chats/{chatId}``. Each field under the right the app asks for it:
+        ``title`` and ``description`` for whoever may change the chat's info (an admin with
+        *change info*, or a member the group lets); ``permissions``, ``slow_mode_seconds``,
+        ``members_hidden``, ``protect_content``, the reactions and a channel's signatures for
+        an admin with *change info*; ``auto_delete_seconds`` for one with *delete messages*;
+        ``admins_hidden`` for one who may appoint admins. What only the owner decides
+        (history, the public link, the feed) is not here. Whether a bot reads every message
+        is not here either: the room decides that in the app. Leave a field out to keep it.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            title: The new name, 1 to 64 characters.
+            description: The new description, up to 500 characters; ``None`` clears it.
+            permissions: What members may do, laid over what they may do now: a name set to
+                ``False`` is taken away, ``True`` is given, the rest stays. Names as in
+                `MemberPermissions`, or in the API's spelling (``"sendMedia"``). Groups only.
+            slow_mode_seconds: Seconds between two messages of a member, 0 to 3600; ``0``
+                turns slow mode off. Groups only.
+            members_hidden: ``True`` shows the member list to the admins only.
+            protect_content: ``True`` stops messages from being forwarded, copied or saved.
+            reactions_enabled: ``False`` turns reactions off.
+            allowed_reactions: The only emoji people may react with, up to 40 of at most 16
+                characters each; ``None`` or an empty list allows any.
+            auto_delete_seconds: After how many seconds new messages delete themselves, up to
+                31 days; ``0`` turns it off.
+            signatures: ``True`` shows who wrote each post. Channels only.
+            signature_profiles: ``True`` links a signature to the profile. Channels only.
+            admins_hidden: ``True`` keeps the admins from the subscribers. Channels only.
+
+        Returns:
+            The chat with the new settings.
+
+        Raises:
+            ValidationError: Nothing to change, a value out of range, an unknown permission,
+                a group's setting on a channel or the other way round, or a private chat.
+            ForbiddenError: The bot lacks the right one of the fields needs.
+
+        Example:
+            Slow the group down and keep files out::
+
+                await api.update_chat("G48213907", slow_mode_seconds=30, permissions={"send_media": False})
+        """
+        return await self.execute(
+            _spec.update_chat(
+                chat_id,
+                title=title,
+                description=description,
+                permissions=permissions,
+                slow_mode_seconds=slow_mode_seconds,
+                members_hidden=members_hidden,
+                protect_content=protect_content,
+                reactions_enabled=reactions_enabled,
+                allowed_reactions=allowed_reactions,
+                auto_delete_seconds=auto_delete_seconds,
+                signatures=signatures,
+                signature_profiles=signature_profiles,
+                admins_hidden=admins_hidden,
+            )
+        )
+
+    async def update_member(
+        self,
+        chat_id: str | int,
+        user_id: str | int,
+        *,
+        role: str | None = None,
+        admin_rights: Iterable[str] | None = None,
+        restrictions: Iterable[str] | None = None,
+        restricted_until: datetime | int | None = KEEP,
+        custom_title: str | None = KEEP,
+        anonymous: bool | None = None,
+    ) -> Member:
+        """Promotes, demotes, restricts or gives a title to a member of a group or channel.
+
+        Calls ``PATCH /chats/{chatId}/members/{userId}``, with the app's rules to the letter.
+        ``role`` and ``admin_rights`` need the *manage admins* right, and nobody hands out a
+        right they don't hold; an admin is touched only by the owner or by whoever appointed
+        them. ``restrictions`` need *ban users* and mean nothing on an admin. ``custom_title``
+        and ``anonymous`` need *manage admins*. The owner is nobody's to change, and a bot
+        doesn't change its own seat. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The member.
+            role: ``"admin"`` promotes, ``"member"`` demotes.
+            admin_rights: The rights of the badge, names as in `AdminRights` or in the API's
+                spelling. With ``role="admin"`` they are the new admin's rights (the server's
+                defaults when left out); alone, they replace an admin's rights.
+            restrictions: The permissions taken away from this member, names as in
+                `MemberPermissions`; an empty list gives them all back.
+            restricted_until: When the restriction ends: an aware `~datetime.datetime` or unix
+                milliseconds; ``None`` for good. Only with ``restrictions``.
+            custom_title: An admin's title, up to 16 characters; ``None`` removes it.
+            anonymous: ``True`` lets an admin post without their name.
+
+        Returns:
+            The member's seat now.
+
+        Raises:
+            ValidationError: Nothing to change, an unknown role, right or permission, a title
+                too long, ``restricted_until`` without ``restrictions``, or a private chat.
+            ForbiddenError: The bot lacks the right, the member is the owner or an admin
+                appointed by somebody else, or it is the bot's own seat.
+            MemberNotFoundError: Not a member, or hidden from the bot.
+
+        Example:
+            Mute somebody for an hour::
+
+                until = datetime.now(UTC) + timedelta(hours=1)
+                await api.update_member(group_id, user_id, restrictions=["send_messages"], restricted_until=until)
+        """
+        return await self.execute(
+            _spec.update_member(
+                chat_id,
+                user_id,
+                role=role,
+                admin_rights=admin_rights,
+                restrictions=restrictions,
+                restricted_until=restricted_until,
+                custom_title=custom_title,
+                anonymous=anonymous,
+            )
+        )
+
+    async def remove_member(
+        self, chat_id: str | int, user_id: str | int, *, ban: bool = False, banned_until: datetime | int | None = None
+    ) -> bool:
+        """Throws somebody out of a group or channel, and bans them if asked.
+
+        Calls ``DELETE /chats/{chatId}/members/{userId}``. It needs the *ban users* right; never
+        the owner, and an admin only by the owner, which a bot never is. A ban keeps them from
+        coming back through any link, until ``banned_until`` or for good. In a group the room
+        sees the usual notice. Retried after a network error or a ``5xx`` answer; when the
+        retry finds them gone, the first try worked.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The member.
+            ban: ``True`` bans them as well.
+            banned_until: When the ban ends: an aware `~datetime.datetime` or unix milliseconds.
+                ``None`` for good. Only with ``ban=True``.
+
+        Returns:
+            ``True`` when they were banned as well, ``False`` when only removed.
+
+        Raises:
+            ValidationError: ``banned_until`` without ``ban=True``, or a private chat.
+            ForbiddenError: The bot lacks the right, or the member is the owner or an admin.
+            MemberNotFoundError: Not a member, or hidden from the bot.
+        """
+        return await self.execute(_spec.remove_member(chat_id, user_id, ban=ban, banned_until=banned_until))
+
+    async def purge_member(self, chat_id: str | int, user_id: str | int, *, up_to: int | None = None) -> bool:
+        """Deletes everything one member wrote in a group or channel.
+
+        Calls ``DELETE /chats/{chatId}/members/{userId}/messages``. It needs the *delete
+        messages* right, as in the app. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The member.
+            up_to: Only up to this message ID. ``None`` deletes all of it.
+
+        Returns:
+            ``True`` once it is done.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+            MemberNotFoundError: No such person.
+        """
+        return await self.execute(_spec.purge_member(chat_id, user_id, up_to=up_to))
+
+    async def get_bans(self, chat_id: str | int) -> list[Ban]:
+        """Lists who is banned from a group or channel.
+
+        Calls ``GET /chats/{chatId}/bans``. It needs the *ban users* right. Retried after a
+        network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The bans.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+        """
+        bans: list[Ban] = await self.execute(_spec.get_bans(chat_id))
+        return bans
+
+    async def unban(self, chat_id: str | int, user_id: str | int) -> bool:
+        """Lifts a ban: the person can come back through a link.
+
+        Calls ``DELETE /chats/{chatId}/bans/{userId}``. It needs the *ban users* right. Nobody
+        is put back in. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The person.
+
+        Returns:
+            ``True`` when there was a ban, ``False`` when there was none.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+        """
+        return await self.execute(_spec.unban(chat_id, user_id))
+
+    async def get_invites(self, chat_id: str | int) -> list[Invite]:
+        """Lists the invite links of a group or channel.
+
+        Calls ``GET /chats/{chatId}/invites``. An admin with the *invite links* right may, and
+        so may a member the group lets add people. Retried after a network error or a ``5xx``
+        answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The links.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot may not manage links here.
+        """
+        invites: list[Invite] = await self.execute(_spec.get_invites(chat_id))
+        return invites
+
+    async def create_invite(
+        self,
+        chat_id: str | int,
+        *,
+        label: str | None = None,
+        expires_at: datetime | int | None = None,
+        max_uses: int | None = None,
+        needs_approval: bool | None = None,
+    ) -> Invite:
+        """Makes an invite link.
+
+        Calls ``POST /chats/{chatId}/invites``, with the right of `get_invites`. A public chat
+        already has its link, its handle. With ``needs_approval`` whoever uses the link asks
+        first, and the bots that may let people in get a ``join_request``. Not repeated after a
+        network error: a lost answer would otherwise make two links.
+
+        Args:
+            chat_id: The group or channel.
+            label: A name for the link, up to 48 characters.
+            expires_at: When it stops working: an aware `~datetime.datetime` or unix
+                milliseconds. ``None`` for never.
+            max_uses: How many people may use it, 1 to 100000. ``None`` for no limit.
+            needs_approval: ``True`` makes people ask before they come in.
+
+        Returns:
+            The new link.
+
+        Raises:
+            ValidationError: A value out of range, or a private chat.
+            ForbiddenError: The bot may not make links here.
+            ChatIsPublicError: The chat is public: its handle is its link.
+        """
+        return await self.execute(
+            _spec.create_invite(
+                chat_id, label=label, expires_at=expires_at, max_uses=max_uses, needs_approval=needs_approval
+            )
+        )
+
+    async def revoke_invite(self, chat_id: str | int, code: str) -> bool:
+        """Revokes an invite link.
+
+        Calls ``DELETE /chats/{chatId}/invites/{code}``. It needs the *invite links* right.
+        Retried after a network error or a ``5xx`` answer; when the retry finds the link gone,
+        the first try worked.
+
+        Args:
+            chat_id: The group or channel.
+            code: The link's code, `Invite.code`.
+
+        Returns:
+            ``True`` once it is revoked.
+
+        Raises:
+            ValidationError: A private chat, or not a code.
+            ForbiddenError: The bot lacks the right.
+            InviteNotFoundError: No such link in this chat.
+        """
+        return await self.execute(_spec.revoke_invite(chat_id, code))
+
+    async def get_join_requests(self, chat_id: str | int) -> list[JoinRequest]:
+        """Lists who asked to come into a group or channel.
+
+        Calls ``GET /chats/{chatId}/requests``. It needs the *add members* right. Retried after
+        a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The requests waiting.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+        """
+        requests: list[JoinRequest] = await self.execute(_spec.get_join_requests(chat_id))
+        return requests
+
+    async def decide_join_request(self, chat_id: str | int, user_id: str | int, approve: bool) -> bool:
+        """Lets somebody in who asked, or turns them away.
+
+        Calls ``POST /chats/{chatId}/requests/{userId}``. It needs the *add members* right, and
+        only works for somebody who asked: it is never a way round a person's "don't add me
+        to groups". Retried after a network error or a ``5xx`` answer; when the retry finds the
+        request gone, the first try worked.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The person who asked.
+            approve: ``True`` lets them in, ``False`` turns them away.
+
+        Returns:
+            ``approve``, as the server confirms it.
+
+        Raises:
+            ValidationError: A private chat, or ``approve`` is not a bool.
+            ForbiddenError: The bot lacks the right.
+            JoinRequestNotFoundError: They have no request waiting.
+            ChatFullError: The chat can't take anybody else. The request stays, to
+                be decided when there is room.
+        """
+        return await self.execute(_spec.decide_join_request(chat_id, user_id, approve))
+
+    async def set_comments(
+        self, chat_id: str | int, enabled: bool, *, signing: bool | None = None, outside: bool | None = None
+    ) -> Chat:
+        """Turns a channel's comments on or off.
+
+        Calls ``PATCH /chats/{chatId}/comments``. It needs the *manage comments* right. Retried
+        after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+            enabled: ``True`` turns the comments on.
+            signing: ``True`` lets the admins comment under their own name. Left out, the server
+                takes it as ``False``.
+            outside: ``True`` lets people who aren't subscribed comment on a public readable
+                channel. Left out, it stays as it is.
+
+        Returns:
+            The channel with the new settings.
+
+        Raises:
+            ValidationError: Not a channel.
+            ForbiddenError: The bot lacks the right.
+        """
+        return await self.execute(_spec.set_comments(chat_id, enabled, signing=signing, outside=outside))
+
+    async def set_post_comments(self, chat_id: str | int, post_id: int, comments_off: bool) -> bool:
+        """Closes or opens again the comments of one post, whatever the channel says.
+
+        Calls ``PATCH /chats/{chatId}/posts/{postId}``. It needs the *manage comments* right.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+            post_id: The post, one the bot was handed.
+            comments_off: ``True`` closes them, ``False`` opens them.
+
+        Returns:
+            Whether the post's comments are closed now.
+
+        Raises:
+            ValidationError: Not a channel.
+            ForbiddenError: The bot lacks the right.
+            MessageNotFoundError: No such post, or one the bot was never handed.
+        """
+        return await self.execute(_spec.set_post_comments(chat_id, post_id, comments_off))
+
+    async def get_channel_stats(self, chat_id: str | int) -> ChannelStats:
+        """Fetches a channel's numbers: subscribers coming and going, views per post.
+
+        Calls ``GET /chats/{chatId}/stats``. For its admins. No words: the best posts come by
+        ID. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+
+        Returns:
+            The numbers.
+
+        Raises:
+            ValidationError: Not a channel.
+            ForbiddenError: The bot is not one of the channel's admins.
+        """
+        return await self.execute(_spec.get_channel_stats(chat_id))
+
+    async def set_chat_photo(self, chat_id: str | int, data: bytes, *, limit: int = UPLOAD_MAX) -> Picture:
+        """Changes the picture of a group or channel.
+
+        Calls ``PUT /chats/{chatId}/photo``, as ``multipart/form-data``. A PNG, JPEG or WebP, or
+        a short MP4 or WebM clip, judged by its bytes. Whoever may change the chat's info may:
+        an admin with *change info*, or a member the group lets. The picture it replaces stays
+        in the chat's album. Not repeated after a network error: a lost answer would put the
+        picture up twice.
+
+        Args:
+            chat_id: The group or channel.
+            data: The picture's bytes.
+            limit: The largest file accepted before anything is sent, in bytes. The server has
+                a lower limit of its own for pictures.
+
+        Returns:
+            Where the new picture is, and what it turned out to be.
+
+        Raises:
+            ValidationError: Not bytes, too large, or a private chat.
+            ForbiddenError: The bot may not change the chat's info.
+            PayloadTooLargeError: The picture is over the server's limit.
+            BadRequestError: Not a picture or a clip (status ``415``).
+        """
+        return await self.execute(_spec.set_chat_photo(chat_id, data, limit=limit))
+
+    async def delete_chat_photo(self, chat_id: str | int) -> bool:
+        """Removes the picture of a group or channel.
+
+        Calls ``DELETE /chats/{chatId}/photo``, with the right of `set_chat_photo`. The current
+        picture leaves the album and the one before it, if any, is worn again. Not repeated
+        after a network error: a second delete would take that one off too.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            ``True`` when there was a picture to remove.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot may not change the chat's info.
+        """
+        return await self.execute(_spec.delete_chat_photo(chat_id))
+
+    async def set_chat_banner(self, chat_id: str | int, data: bytes, *, limit: int = UPLOAD_MAX) -> Picture:
+        """Changes the banner of a group or channel, like `set_chat_photo`.
+
+        Calls ``PUT /chats/{chatId}/banner``. Not repeated after a network error.
+
+        Args:
+            chat_id: The group or channel.
+            data: The banner's bytes: a PNG, JPEG or WebP, or a short MP4 or WebM clip.
+            limit: The largest file accepted before anything is sent, in bytes.
+
+        Returns:
+            Where the new banner is, and what it turned out to be.
+
+        Raises:
+            ValidationError: Not bytes, too large, or a private chat.
+            ForbiddenError: The bot may not change the chat's info.
+            PayloadTooLargeError: The banner is over the server's limit.
+            BadRequestError: Not a picture or a clip (status ``415``).
+        """
+        return await self.execute(_spec.set_chat_banner(chat_id, data, limit=limit))
+
+    async def delete_chat_banner(self, chat_id: str | int) -> bool:
+        """Removes the banner of a group or channel, like `delete_chat_photo`.
+
+        Calls ``DELETE /chats/{chatId}/banner``. Not repeated after a network error.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            ``True`` when there was a banner to remove.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot may not change the chat's info.
+        """
+        return await self.execute(_spec.delete_chat_banner(chat_id))
 
     # --- not an operation of the spec, but where the media URLs point ---
 
@@ -1407,7 +2421,8 @@ class Client(_Base):
     cannot be pickled.
 
     Attributes:
-        bot_id (int): The bot's user ID, read from the token.
+        bot_id (int): The number in the token. It is not the bot's ID, which `get_me` gives
+            (``"B48213907"``), and a token made before IDs became strings carries the old number.
         api_url (str): The server's address, without ``/bot/v1`` and the trailing slash.
         timeout (httpx2.Timeout): The timeouts of every request, made from ``timeout``.
         retry (RetryPolicy): The retry rules in use.
@@ -1421,7 +2436,7 @@ class Client(_Base):
 
             with Client() as api:                     # token from HIDESAY_BOT_TOKEN
                 me = api.get_me()
-                api.send_message(7781, f"Hello from @{me.username}")
+                api.send_message("48213907", f"Hello from @{me.username}")
     """
 
     def __init__(
@@ -1930,6 +2945,9 @@ class Client(_Base):
         markup: InlineKeyboard | Mapping[str, Any] | None = None,
         silent: bool | None = None,
         send_id: str | uuid.UUID | None = None,
+        media: MediaLike | Iterable[MediaLike] | None = None,
+        sticker: StickerLike | None = None,
+        mentions: Iterable[str | int] | None = None,
         chat_kind: ChatKind | None = None,
     ) -> SentMessageBase:
         """Sends a message: ``text`` into a readable chat, ``armored`` into an encrypted one.
@@ -1939,14 +2957,24 @@ class Client(_Base):
         chat, seal the message to every key of `get_chat_keys` and to the bot's own key, and
         sign it. `BotKey.seal` adds the bot's key and the signature for you.
 
+        Into a readable chat it also sends files (``media``, uploaded first with `upload_file`,
+        ``text`` being the caption) or a ``sticker``; the server writes the envelope the phones
+        read. In an encrypted chat files and stickers travel inside the armor:
+        `SyncBot.send_media` and `SyncBot.send_sticker` do it.
+
         Before sending, it checks what the server would refuse:
 
         - the chat is an ID like ``"G48213907"``, ``"C48213907"`` or a person's
           ``"48213907"``, and ``reply_to`` a positive integer;
         - ``text`` is not blank, has at most 4096 UTF-16 code units, and no control characters
-          but newline and tab (carriage returns become newlines first);
+          but newline and tab (carriage returns become newlines first); as a caption it may be
+          blank, and is then left out;
         - ``armored`` holds ``-----BEGIN PGP MESSAGE-----`` and has at most 131072 characters;
+        - ``media`` holds 1 to 10 files described as the server's envelope wants them, and an
+          album of more than one only pictures and videos;
+        - a ``sticker`` comes alone, without text;
         - ``markup`` follows the rules of `InlineKeyboard`;
+        - ``mentions`` are at most 20 user IDs;
         - ``send_id``, when given, is a UUID.
 
         The client paces the sends: by default one a second into a private chat, 20 a minute
@@ -1969,6 +2997,15 @@ class Client(_Base):
             send_id: A UUID that names this send, as a string or a `uuid.UUID`. ``None`` makes
                 a new one. Pass your own to repeat the send safely later, after a crash for
                 example.
+            media: Readable chats: the files to send, one or an album of 2 to 10 pictures and
+                clips, each a `MediaIn` or a dict in the API's form, with the ID `upload_file`
+                gave. ``text`` is the caption.
+            sticker: Readable chats: a sticker, as its ID, a `Sticker` or a dict with ``id``
+                and ``mediaId``. The file ID proves the bot was shown a sticker of a pack that
+                is not public.
+            mentions: Groups: the IDs of the people the words tag (``@[Anna](u48213907)``), up
+                to 20, so they are told even with the group muted, as for a person's tag.
+                Somebody not in the group is dropped.
             chat_kind: The `ChatKind` of the chat, for the rate limiter only: groups and
                 channels are paced per minute. ``None`` paces it like a private chat.
 
@@ -1979,9 +3016,14 @@ class Client(_Base):
             ValidationError: An argument breaks one of the rules above, or both or neither of
                 ``text`` and ``armored`` were given.
             WrongBodyKindError: ``text`` into an encrypted chat, or ``armored`` into a readable
-                one. ``expected`` says which one the chat wants.
+                one, or files or a sticker into an encrypted one. ``expected`` says which one
+                the chat wants.
+            BadMediaError: A file is not one this bot uploaded, or the server refused how it is
+                described.
+            StickerNotFoundError: No such sticker, or one the bot may not send.
             BadMarkupError: The server refused the keyboard.
-            ForbiddenError: The bot may not write in this chat.
+            ForbiddenError: The bot may not write in this chat, or send files or voice notes in
+                this group.
             BlockedByUserError: The person blocked the bot.
             UserGoneError: The person closed their account.
             ChatNotFoundError: No such chat, or the bot is not in it.
@@ -1993,8 +3035,14 @@ class Client(_Base):
         Examples:
             Into a readable chat::
 
-                sent = api.send_message(7781, "Backup finished.")
+                sent = api.send_message("48213907", "Backup finished.")
                 print(sent.id, sent.date)
+
+            A picture, uploaded first::
+
+                up = api.upload_file(jpeg)
+                media = MediaIn(id=up.id, kind="image", mime="image/jpeg", width=1280, height=720)
+                api.send_message(chat_id, "The view from here", media=[media])
 
             Into an encrypted group, sealed by hand::
 
@@ -2012,6 +3060,9 @@ class Client(_Base):
                 markup=markup,
                 silent=silent,
                 send_id=send_id,
+                media=media,
+                sticker=sticker,
+                mentions=mentions,
                 chat_kind=chat_kind,
             )
         )
@@ -2028,9 +3079,12 @@ class Client(_Base):
     ) -> SentMessageBase:
         """Changes the text, the buttons, or both, of one of the bot's own messages.
 
-        Calls ``PATCH /messages/{messageId}``. Only the bot's own ordinary messages can be
-        edited, at any age, and people see the edit live. The new body follows the rules of
-        `send_message`: ``text`` in a readable chat, ``armored`` in an encrypted one. Before
+        Calls ``PATCH /messages/{messageId}``. The bot edits its own ordinary messages, at any
+        age, and people see the edit live. In a channel where it may edit posts it edits
+        anybody's post too, the words only: buttons are only ever the sender's. On a file or an
+        album of a readable chat, ``text`` is the new caption and the files stay. The new body
+        follows the rules of `send_message`: ``text`` in a readable chat, ``armored`` in an
+        encrypted one. Before
         sending, it checks the IDs, the body and the keyboard, and that there is something to
         change. Edits are paced with the same numbers as sends, counted on their own; the 30 a
         second in all is shared with sends. Retried after a network error or a ``5xx`` answer:
@@ -2056,7 +3110,8 @@ class Client(_Base):
             WrongBodyKindError: ``text`` into an encrypted chat, or ``armored`` into a readable
                 one. ``expected`` says which one the chat wants.
             BadMarkupError: The server refused the keyboard.
-            ForbiddenError: Not the bot's message, or not an ordinary one (a service notice).
+            ForbiddenError: Not the bot's message (nor a channel post it may edit), not an
+                ordinary one (a service notice), or new buttons on somebody else's post.
             BlockedByUserError: In a private chat, the person blocked the bot.
             UserGoneError: In a private chat, the person closed their account.
             ChatNotFoundError: No such chat, or the bot is not in it.
@@ -2075,10 +3130,12 @@ class Client(_Base):
     def delete_message(self, chat_id: str | int, message_id: int) -> bool:
         """Deletes a message for everyone, for good.
 
-        Calls ``DELETE /messages/{messageId}``, with ``chatId`` in the query. The bot can
-        delete its own messages anywhere, and other people's in a group or channel where it
-        has the "delete messages" right. Secret messages and service notices cannot be
-        deleted. Before sending, it checks that both IDs are positive integers.
+        Calls ``DELETE /messages/{messageId}``, with ``chatId`` in the query. The bot deletes
+        any message of a private chat, as either person can there; in a group or channel its
+        own, anybody's where it has the *delete messages* right, and anybody's comment with the
+        *manage comments* right. A post takes its comments with it. Only messages the bot was
+        handed; secret messages and service notices cannot be deleted. Before sending, it
+        checks the chat and the message ID. `delete_messages` deletes up to 100 at once.
 
         Retried after a network error or a ``5xx`` answer. If an earlier answer was lost and
         the retry gets ``message_not_found``, the first try did delete the message, and the
@@ -2154,8 +3211,8 @@ class Client(_Base):
 
         Calls ``GET /chats/{chatId}``. ``mode`` tells which body to send: ``text`` in an
         ``open`` chat, ``armored`` in a ``protected`` one. A private chat also carries the
-        other person and whether they blocked the bot. Before sending, it checks that
-        ``chat_id`` is a positive integer. Retried after a network error or a ``5xx`` answer.
+        other person and whether they blocked the bot. Before sending, it checks the shape of
+        ``chat_id``. Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: The chat.
@@ -2181,8 +3238,8 @@ class Client(_Base):
         Calls ``GET /chats/{chatId}/keys``. The answer holds the keys of the people in the
         chat, IDs and keys only, no names. The bot's own key is not in it: add it yourself
         (`BotKey.seal` does). Other bots that only receive what is addressed to them are left
-        out, as they are for the app. Before sending, it checks that ``chat_id`` is a positive
-        integer. Retried after a network error or a ``5xx`` answer.
+        out, as they are for the app. Before sending, it checks the shape of ``chat_id``.
+        Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: An encrypted chat the bot is in.
@@ -2214,8 +3271,7 @@ class Client(_Base):
         Calls ``GET /chats/{chatId}/members``. Where the member list is hidden, a bot that is
         not an admin sees the admins only, and a channel that keeps its admins to itself
         leaves them out. Names and handles only, never phone numbers. Before sending, it checks
-        that ``chat_id`` is a positive integer. Retried after a network error or a ``5xx``
-        answer.
+        the shape of ``chat_id``. Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: A group or channel the bot is in.
@@ -2239,8 +3295,8 @@ class Client(_Base):
     def get_chat_member(self, chat_id: str | int, user_id: str | int) -> Member:
         """Fetches one member's seat in a group or channel.
 
-        Calls ``GET /chats/{chatId}/members/{userId}``. Before sending, it checks that both IDs
-        are positive integers. Retried after a network error or a ``5xx`` answer.
+        Calls ``GET /chats/{chatId}/members/{userId}``. Before sending, it checks the shape of
+        both IDs. Retried after a network error or a ``5xx`` answer.
 
         Args:
             chat_id: A group or channel the bot is in.
@@ -2269,7 +3325,7 @@ class Client(_Base):
 
         Calls ``POST /chats/{chatId}/leave``. The chat is told, the way it would be about a
         person. A bot cannot leave a private chat; the person can block it. Before sending, it
-        checks that ``chat_id`` is a positive integer.
+        checks the shape of ``chat_id``.
 
         Retried after a network error or a ``5xx`` answer. If an earlier answer was lost and
         the retry finds no chat, the first try worked, and the method returns ``True``.
@@ -2291,9 +3347,9 @@ class Client(_Base):
 
         Calls ``POST /chats/{chatId}/typing``. The indicator clears on its own after a few
         seconds, or when a message lands. One goes out per chat every 3 seconds at most; calls
-        in between show nothing and return ``False``. Before sending, it checks that
-        ``chat_id`` is a positive integer. Not retried after a network error or a ``5xx``
-        answer: a late indicator is useless.
+        in between show nothing and return ``False``. Before sending, it checks the shape of
+        ``chat_id``. Not retried after a network error or a ``5xx`` answer: a late indicator is
+        useless.
 
         Args:
             chat_id: A chat the bot may write in.
@@ -2329,7 +3385,7 @@ class Client(_Base):
 
         It finds anybody with a public handle, which is no more than the short link already
         shows a stranger with a browser. The ID on its own unlocks nothing: sending still needs
-        the bot to be in the chat, and `Client.get_user_key` still needs a chat in common.
+        the bot to be in the chat, and `Client.get_user_key` still needs somebody the bot may look up.
 
         Args:
             username: The handle, with or without the ``@``.
@@ -2356,10 +3412,9 @@ class Client(_Base):
     def get_user_key(self, user_id: str | int) -> UserKey:
         """Fetches one person's public key.
 
-        Calls ``GET /users/{userId}/key``. It works only for someone the bot shares a chat
-        with: anyone else is `UserNotFoundError`, whether or not they exist. Before sending, it
-        checks that ``user_id`` is a positive integer. Retried after a network error or a
-        ``5xx`` answer.
+        Calls ``GET /users/{userId}/key``. It works only for someone the bot may look up,
+        as for ``get_user``: anyone else is `UserNotFoundError`, whether or not they exist. Before sending, it
+        checks the shape of ``user_id``. Retried after a network error or a ``5xx`` answer.
 
         Args:
             user_id: The person.
@@ -2369,7 +3424,7 @@ class Client(_Base):
             public key.
 
         Raises:
-            UserNotFoundError: No such person, or no chat in common with the bot.
+            UserNotFoundError: No such person, or nobody the bot may look up.
             NoUserKeyError: The person never published a key.
 
         Example:
@@ -2427,6 +3482,963 @@ class Client(_Base):
                 data = validate_web_bot_data(init_data, bot_id=me.id, public_key=key)
         """
         return self.execute(_spec.get_web_bot_key())
+
+    # --- more on messages ---
+
+    def delete_messages(self, chat_id: str | int, message_ids: Iterable[int]) -> list[int]:
+        """Deletes up to 100 messages of one chat at once, for everyone, for good.
+
+        Calls ``POST /messages/delete``, with the rules of `delete_message` for each message:
+        anything in a private chat; in a group or channel the bot's own, anybody's with the
+        *delete messages* right, anybody's comment with the *manage comments* right. A post
+        takes its comments with it. IDs that are not of this chat, or that the bot was never
+        handed, are left out. If one message is not the bot's to delete, nothing is deleted.
+        Before sending, it checks the chat and that there are 1 to 100 positive IDs. Retried
+        after a network error or a ``5xx`` answer: a repeat leaves out what is already gone.
+
+        Args:
+            chat_id: The chat the messages are in.
+            message_ids: The messages, 1 to 100 IDs.
+
+        Returns:
+            The IDs that went, the comments taken with their posts included.
+
+        Raises:
+            ValidationError: No IDs, more than 100, or one that is not a positive integer.
+            ForbiddenError: One of the messages is not the bot's to delete. Nothing was deleted.
+            ChatNotFoundError: No such chat, or the bot is not in it.
+
+        Example:
+            Clear what a flood left behind::
+
+                gone = api.delete_messages("G48213907", [90213, 90214, 90215])
+        """
+        return self.execute(_spec.delete_messages(chat_id, message_ids))
+
+    def forward_message(
+        self,
+        chat_id: str | int,
+        from_chat_id: str | int,
+        message_id: int,
+        *,
+        hide_sender: bool | None = None,
+        silent: bool | None = None,
+        send_id: str | uuid.UUID | None = None,
+        chat_kind: ChatKind | None = None,
+    ) -> SentMessageBase:
+        """Sends a message the bot was handed on into another chat it is in.
+
+        Calls ``POST /messages/forward``. The forward carries "forwarded from" over it: the
+        person, or the channel and its post. A forward of a forward keeps the first origin.
+        Files go along: the server copies them for the bot, so the forward outlives the
+        original. A chat that protects its content does not let its messages out, and
+        comments are not forwarded.
+
+        The server forwards only from a readable chat into a readable chat. A message from, or
+        into, an end-to-end encrypted chat answers `ChatIsProtectedError`: the bot has to open
+        it and seal it again itself, which is what `SyncBot.forward_message` does.
+
+        Like a send it carries a ``sendId``, so it is retried after a network error or a
+        ``5xx`` answer without forwarding twice, and it is paced like a send into the target.
+
+        Args:
+            chat_id: Where to forward it.
+            from_chat_id: The chat the message is in.
+            message_id: The message.
+            hide_sender: ``True`` sends a plain copy, without "forwarded from".
+            silent: Channels only: ``True`` posts without a notification.
+            send_id: A UUID that names this forward. ``None`` makes a new one.
+            chat_kind: The `ChatKind` of the target, for the rate limiter only. ``None`` reads
+                it from the ID.
+
+        Returns:
+            The forward, as the server stored it.
+
+        Raises:
+            ChatIsProtectedError: One of the two chats is end-to-end encrypted, or the message
+                is.
+            ForbiddenError: The bot may not write in the target, or the source protects its
+                content.
+            BlockedByUserError: The person on the other side of the target blocked the bot.
+            ChatNotFoundError: One of the chats does not exist, or the bot is not in it.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+            BadRequestError: The message is a comment.
+        """
+        return self.execute(
+            _spec.forward_message(
+                chat_id,
+                from_chat_id,
+                message_id,
+                hide_sender=hide_sender,
+                silent=silent,
+                send_id=send_id,
+                chat_kind=chat_kind,
+            )
+        )
+
+    def set_reaction(self, chat_id: str | int, message_id: int, emoji: str) -> MessageReactions:
+        """Puts the bot's reaction on a message, in place of the one it had there.
+
+        Calls ``PUT /messages/{messageId}/reaction``. One reaction per message, as for everybody.
+        A custom emoji goes as the app writes it. The rules of a person's reaction hold: in a
+        private chat nobody blocked anybody; in a group or channel reactions are on, the emoji
+        is one the chat takes (`Chat.allowed_reactions`) and the bot may react. Only messages
+        the bot was handed. Before sending, it checks that ``emoji`` is 1 to 48 characters once
+        trimmed. Retried after a network error or a ``5xx`` answer: the same reaction twice is
+        one reaction.
+
+        Args:
+            chat_id: The chat the message is in.
+            message_id: The message.
+            emoji: The emoji.
+
+        Returns:
+            Every reaction on the message now, the bot's marked ``mine``.
+
+        Raises:
+            ValidationError: ``emoji`` is empty or too long.
+            ForbiddenError: Reactions are off, the chat does not take this emoji, or the bot
+                may not react.
+            BlockedByUserError: In a private chat, the person blocked the bot.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+
+        Example:
+            Say "seen" without writing::
+
+                api.set_reaction(chat_id, message_id, "👀")
+        """
+        return self.execute(_spec.set_reaction(chat_id, message_id, emoji))
+
+    def remove_reaction(self, chat_id: str | int, message_id: int) -> bool:
+        """Takes the bot's reaction off a message.
+
+        Calls ``DELETE /messages/{messageId}/reaction``, with ``chatId`` in the query. Retried
+        after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat the message is in.
+            message_id: The message.
+
+        Returns:
+            ``True`` when the bot had a reaction there, ``False`` when it had none.
+
+        Raises:
+            BlockedByUserError: In a private chat, the person blocked the bot.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        return self.execute(_spec.remove_reaction(chat_id, message_id))
+
+    # --- files and stickers ---
+
+    def upload_file(self, data: bytes, *, limit: int = UPLOAD_MAX) -> UploadedFile:
+        """Uploads a file for a message.
+
+        Calls ``POST /attachments``, as ``multipart/form-data`` with the bytes in a field called
+        ``file``. The server takes up to 50 MB, 30 uploads a minute. The file goes up as it is,
+        under a neutral name and type: say what it is when you send it.
+
+        Into a readable chat, upload the file as it is and pass its ID in the ``media`` of
+        `send_message`. Into an encrypted chat, upload it already sealed to the chat's keys and
+        the bot's own, and put its ID in the envelope inside the ``armored`` body.
+        `SyncBot.send_media` does either. Retried after a network error or a ``5xx`` answer; a lost
+        answer leaves an extra copy on the server that no message points at.
+
+        Args:
+            data: The file's bytes.
+            limit: The largest file accepted, in bytes. 50 MiB by default, the server's limit
+                (`Limits.upload_bytes_max`).
+
+        Returns:
+            The file's ID, its address and the size the server stored.
+
+        Raises:
+            ValidationError: ``data`` is not bytes, or is larger than ``limit``.
+            PayloadTooLargeError: The server's limit is lower.
+            FloodWaitError: More than 30 uploads this minute.
+            ServerError: ``try_again``: the server is short of disk right now.
+        """
+        return self.execute(_spec.upload_file(data, limit=limit))
+
+    def get_sticker(self, sticker_id: int, media_id: str | None = None) -> Sticker:
+        """Fetches a sticker the bot may send.
+
+        Calls ``GET /stickers/{stickerId}``. A sticker of a public pack, or one the bot was
+        shown: pass the ``media_id`` a message carried for it as proof. For a readable chat,
+        `send_message` needs only the ID; for an encrypted chat this is what goes in the
+        envelope. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            sticker_id: The sticker's ID.
+            media_id: The sticker's file ID, as a message carried it, for a pack that is not
+                public.
+
+        Returns:
+            The sticker.
+
+        Raises:
+            StickerNotFoundError: No such sticker, or one of a pack the bot can't use.
+        """
+        return self.execute(_spec.get_sticker(sticker_id, media_id))
+
+    # --- chats and history ---
+
+    def get_chats(self) -> list[Chat]:
+        """Lists the groups and channels the bot is in.
+
+        Calls ``GET /chats``. Each one as `get_chat` describes it, the bot's seat included.
+        Private chats are not listed: they are the people who wrote to the bot. Retried after
+        a network error or a ``5xx`` answer.
+
+        Returns:
+            The groups and channels.
+
+        Example:
+            Where the bot may not read everything::
+
+                for chat in api.get_chats():
+                    if not chat.reads_all:
+                        print(chat.title, "only sends me what is meant for me")
+        """
+        chats: list[Chat] = self.execute(_spec.get_chats())
+        return chats
+
+    def get_history(
+        self, chat_id: str | int, *, before: int | None = None, limit: int | None = None
+    ) -> list[MessageBase]:
+        """Fetches what the bot was handed in a chat, newest first.
+
+        Calls ``GET /chats/{chatId}/messages``. In a private chat that is every message of it.
+        In a group or channel it is the bot's own messages and the ones the room delivered to
+        it, and nothing else: what it was not let read stays out, even after the room lets it
+        read everything. Comments are not listed here, see `get_comments`. The messages come
+        as the server keeps them: in an encrypted chat ``armored``, which `SyncBot.get_history`
+        decrypts. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            before: The oldest ID you hold, for the next page back. ``None`` for the newest.
+            limit: How many, 1 to 100. ``None`` leaves it to the server, which gives 50.
+
+        Returns:
+            The messages, newest first. Empty when there are none.
+
+        Raises:
+            ValidationError: ``before`` or ``limit`` out of range.
+            ChatNotFoundError: No such chat, or the bot is not in it.
+
+        Example:
+            Every page, back to the start::
+
+                page = api.get_history(chat_id, limit=100)
+                while page:
+                    store(page)
+                    page = api.get_history(chat_id, before=page[-1].id, limit=100)
+        """
+        messages: list[MessageBase] = self.execute(_spec.get_history(chat_id, before=before, limit=limit))
+        return messages
+
+    def get_message(self, chat_id: str | int, message_id: int) -> MessageBase:
+        """Fetches one message the bot was handed.
+
+        Calls ``GET /chats/{chatId}/messages/{messageId}``. The rule of `get_history` holds: a
+        message the bot was not handed answers like one that doesn't exist. Retried after a
+        network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            message_id: The message.
+
+        Returns:
+            The message, as the server keeps it.
+
+        Raises:
+            ChatNotFoundError: No such chat, or the bot is not in it.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        return self.execute(_spec.get_message(chat_id, message_id))
+
+    def read_chat(self, chat_id: str | int, up_to: int | None = None) -> int | None:
+        """Marks a chat read: the ticks people see.
+
+        Calls ``POST /chats/{chatId}/read``. In a group or channel only a bot the room lets read
+        every message may do it: one that gets only what is meant for it would show up as
+        having read people it never saw. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            up_to: The newest message read. ``None`` marks everything.
+
+        Returns:
+            The ID of the last message marked read, or ``None`` when the server did not say.
+
+        Raises:
+            ReadsAllNeededError: A group or channel that does not let the bot read every
+                message.
+            ChatNotFoundError: No such chat, or the bot is not in it.
+        """
+        return self.execute(_spec.read_chat(chat_id, up_to))
+
+    def pin_message(self, chat_id: str | int, message_id: int) -> list[int]:
+        """Pins a message for everybody in the chat.
+
+        Calls ``PUT /chats/{chatId}/pins/{messageId}``. In a group or channel it needs the *pin
+        messages* right, or the members' permission to pin. In a private chat it is pinned for
+        the person too, and the chat says so with a notice; up to 100. Only messages the bot
+        was handed, not notices. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            message_id: The message.
+
+        Returns:
+            The IDs of the messages pinned in the chat now.
+
+        Raises:
+            ForbiddenError: The bot may not pin messages here.
+            BlockedByUserError: In a private chat, the person blocked the bot.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        pinned: list[int] = self.execute(_spec.pin_message(chat_id, message_id))
+        return pinned
+
+    def unpin_message(self, chat_id: str | int, message_id: int) -> list[int]:
+        """Unpins a message.
+
+        Calls ``DELETE /chats/{chatId}/pins/{messageId}``, with the rights of `pin_message`.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The chat.
+            message_id: The message.
+
+        Returns:
+            The IDs of the messages still pinned in the chat.
+
+        Raises:
+            ForbiddenError: The bot may not unpin messages here.
+            MessageNotFoundError: No such message, or one the bot was never handed.
+        """
+        pinned: list[int] = self.execute(_spec.unpin_message(chat_id, message_id))
+        return pinned
+
+    def unpin_all(self, chat_id: str | int) -> list[int]:
+        """Unpins every message of a group or channel.
+
+        Calls ``DELETE /chats/{chatId}/pins``, with the rights of `pin_message`. Not for a
+        private chat: the person's own pins there are not the bot's to clear. Retried after a
+        network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The IDs still pinned: none.
+
+        Raises:
+            ValidationError: ``chat_id`` is a private chat.
+            ForbiddenError: The bot may not unpin messages here.
+        """
+        pinned: list[int] = self.execute(_spec.unpin_all(chat_id))
+        return pinned
+
+    def get_comments(
+        self, chat_id: str | int, post_id: int, *, before: int | None = None, limit: int | None = None
+    ) -> Comments:
+        """Fetches the comments the bot was handed under a channel post, newest first.
+
+        Calls ``GET /chats/{chatId}/posts/{postId}/comments``. The rule of `get_history` holds.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+            post_id: The post, one the bot was handed.
+            before: The oldest comment ID you hold, for the next page back.
+            limit: How many, 1 to 100. ``None`` leaves it to the server, which gives 50.
+
+        Returns:
+            The comments, and whether the post takes comments right now.
+
+        Raises:
+            ValidationError: ``chat_id`` is not a channel, or ``before`` or ``limit`` is out of
+                range.
+            MessageNotFoundError: No such post, or one the bot was never handed.
+        """
+        return self.execute(_spec.get_comments(chat_id, post_id, before=before, limit=limit))
+
+    def send_comment(
+        self,
+        chat_id: str | int,
+        post_id: int,
+        text: str | None = None,
+        *,
+        armored: str | None = None,
+        reply_to: int | None = None,
+        as_author: bool | None = None,
+        mentions: Iterable[str | int] | None = None,
+    ) -> SentMessageBase:
+        """Comments under a channel post.
+
+        Calls ``POST /chats/{chatId}/posts/{postId}/comments``, with the rules of a person's
+        comment: the channel's comments are on and this post's are not closed, a member whose
+        voice was taken away stays quiet, and ``reply_to`` points at a comment of the same
+        post or is dropped. ``text`` in a readable channel, ``armored`` in an encrypted one,
+        sealed to the channel's keys. A bot that runs the channel speaks as the channel unless
+        the channel lets its admins sign and ``as_author`` is ``True``.
+
+        The server keeps no ``sendId`` for comments, so a comment is not repeated after a
+        network error: a lost answer could otherwise write it twice. It is paced like a send
+        into the channel.
+
+        Args:
+            chat_id: The channel.
+            post_id: The post, one the bot was handed.
+            text: The comment, for a readable channel.
+            armored: The sealed comment, for an encrypted channel.
+            reply_to: A comment of the same post to answer.
+            as_author: ``True`` signs the comment with the bot's own name, where the channel
+                allows it.
+            mentions: The IDs of the people the words tag, up to 20, so they are told even with
+                the comments muted.
+
+        Returns:
+            The comment, as the server stored it.
+
+        Raises:
+            ValidationError: ``chat_id`` is not a channel, a body breaks a rule, or both or
+                neither of ``text`` and ``armored`` were given.
+            WrongBodyKindError: ``text`` into an encrypted channel, or ``armored`` into a
+                readable one.
+            CommentsClosedError: The channel takes no comments, or this post doesn't.
+            ForbiddenError: The bot may not comment here.
+            MessageNotFoundError: No such post, or one the bot was never handed.
+        """
+        return self.execute(
+            _spec.send_comment(
+                chat_id, post_id, text, armored=armored, reply_to=reply_to, as_author=as_author, mentions=mentions
+            )
+        )
+
+    def get_user(self, user_id: str | int) -> Profile:
+        """Fetches somebody's public profile.
+
+        Calls ``GET /users/{userId}``. Only for somebody the bot may look up: a private chat
+        with them, a room whose member list shows them to the bot, or a room where their words
+        reached it. The same gate as their key. No phone number, no presence. Somebody who blocked the bot keeps
+        their pictures to themselves. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            user_id: The person, or a bot.
+
+        Returns:
+            The profile.
+
+        Raises:
+            UserNotFoundError: No such person, or nobody the bot may look up.
+        """
+        return self.execute(_spec.get_user(user_id))
+
+    # --- running a group or channel ---
+
+    def update_chat(
+        self,
+        chat_id: str | int,
+        *,
+        title: str | None = None,
+        description: str | None = KEEP,
+        permissions: Mapping[str, bool] | None = None,
+        slow_mode_seconds: int | None = None,
+        members_hidden: bool | None = None,
+        protect_content: bool | None = None,
+        reactions_enabled: bool | None = None,
+        allowed_reactions: Iterable[str] | None = KEEP,
+        auto_delete_seconds: int | None = None,
+        signatures: bool | None = None,
+        signature_profiles: bool | None = None,
+        admins_hidden: bool | None = None,
+    ) -> Chat:
+        """Changes the settings of a group or channel.
+
+        Calls ``PATCH /chats/{chatId}``. Each field under the right the app asks for it:
+        ``title`` and ``description`` for whoever may change the chat's info (an admin with
+        *change info*, or a member the group lets); ``permissions``, ``slow_mode_seconds``,
+        ``members_hidden``, ``protect_content``, the reactions and a channel's signatures for
+        an admin with *change info*; ``auto_delete_seconds`` for one with *delete messages*;
+        ``admins_hidden`` for one who may appoint admins. What only the owner decides
+        (history, the public link, the feed) is not here. Whether a bot reads every message
+        is not here either: the room decides that in the app. Leave a field out to keep it.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            title: The new name, 1 to 64 characters.
+            description: The new description, up to 500 characters; ``None`` clears it.
+            permissions: What members may do, laid over what they may do now: a name set to
+                ``False`` is taken away, ``True`` is given, the rest stays. Names as in
+                `MemberPermissions`, or in the API's spelling (``"sendMedia"``). Groups only.
+            slow_mode_seconds: Seconds between two messages of a member, 0 to 3600; ``0``
+                turns slow mode off. Groups only.
+            members_hidden: ``True`` shows the member list to the admins only.
+            protect_content: ``True`` stops messages from being forwarded, copied or saved.
+            reactions_enabled: ``False`` turns reactions off.
+            allowed_reactions: The only emoji people may react with, up to 40 of at most 16
+                characters each; ``None`` or an empty list allows any.
+            auto_delete_seconds: After how many seconds new messages delete themselves, up to
+                31 days; ``0`` turns it off.
+            signatures: ``True`` shows who wrote each post. Channels only.
+            signature_profiles: ``True`` links a signature to the profile. Channels only.
+            admins_hidden: ``True`` keeps the admins from the subscribers. Channels only.
+
+        Returns:
+            The chat with the new settings.
+
+        Raises:
+            ValidationError: Nothing to change, a value out of range, an unknown permission,
+                a group's setting on a channel or the other way round, or a private chat.
+            ForbiddenError: The bot lacks the right one of the fields needs.
+
+        Example:
+            Slow the group down and keep files out::
+
+                api.update_chat("G48213907", slow_mode_seconds=30, permissions={"send_media": False})
+        """
+        return self.execute(
+            _spec.update_chat(
+                chat_id,
+                title=title,
+                description=description,
+                permissions=permissions,
+                slow_mode_seconds=slow_mode_seconds,
+                members_hidden=members_hidden,
+                protect_content=protect_content,
+                reactions_enabled=reactions_enabled,
+                allowed_reactions=allowed_reactions,
+                auto_delete_seconds=auto_delete_seconds,
+                signatures=signatures,
+                signature_profiles=signature_profiles,
+                admins_hidden=admins_hidden,
+            )
+        )
+
+    def update_member(
+        self,
+        chat_id: str | int,
+        user_id: str | int,
+        *,
+        role: str | None = None,
+        admin_rights: Iterable[str] | None = None,
+        restrictions: Iterable[str] | None = None,
+        restricted_until: datetime | int | None = KEEP,
+        custom_title: str | None = KEEP,
+        anonymous: bool | None = None,
+    ) -> Member:
+        """Promotes, demotes, restricts or gives a title to a member of a group or channel.
+
+        Calls ``PATCH /chats/{chatId}/members/{userId}``, with the app's rules to the letter.
+        ``role`` and ``admin_rights`` need the *manage admins* right, and nobody hands out a
+        right they don't hold; an admin is touched only by the owner or by whoever appointed
+        them. ``restrictions`` need *ban users* and mean nothing on an admin. ``custom_title``
+        and ``anonymous`` need *manage admins*. The owner is nobody's to change, and a bot
+        doesn't change its own seat. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The member.
+            role: ``"admin"`` promotes, ``"member"`` demotes.
+            admin_rights: The rights of the badge, names as in `AdminRights` or in the API's
+                spelling. With ``role="admin"`` they are the new admin's rights (the server's
+                defaults when left out); alone, they replace an admin's rights.
+            restrictions: The permissions taken away from this member, names as in
+                `MemberPermissions`; an empty list gives them all back.
+            restricted_until: When the restriction ends: an aware `~datetime.datetime` or unix
+                milliseconds; ``None`` for good. Only with ``restrictions``.
+            custom_title: An admin's title, up to 16 characters; ``None`` removes it.
+            anonymous: ``True`` lets an admin post without their name.
+
+        Returns:
+            The member's seat now.
+
+        Raises:
+            ValidationError: Nothing to change, an unknown role, right or permission, a title
+                too long, ``restricted_until`` without ``restrictions``, or a private chat.
+            ForbiddenError: The bot lacks the right, the member is the owner or an admin
+                appointed by somebody else, or it is the bot's own seat.
+            MemberNotFoundError: Not a member, or hidden from the bot.
+
+        Example:
+            Mute somebody for an hour::
+
+                until = datetime.now(UTC) + timedelta(hours=1)
+                api.update_member(group_id, user_id, restrictions=["send_messages"], restricted_until=until)
+        """
+        return self.execute(
+            _spec.update_member(
+                chat_id,
+                user_id,
+                role=role,
+                admin_rights=admin_rights,
+                restrictions=restrictions,
+                restricted_until=restricted_until,
+                custom_title=custom_title,
+                anonymous=anonymous,
+            )
+        )
+
+    def remove_member(
+        self, chat_id: str | int, user_id: str | int, *, ban: bool = False, banned_until: datetime | int | None = None
+    ) -> bool:
+        """Throws somebody out of a group or channel, and bans them if asked.
+
+        Calls ``DELETE /chats/{chatId}/members/{userId}``. It needs the *ban users* right; never
+        the owner, and an admin only by the owner, which a bot never is. A ban keeps them from
+        coming back through any link, until ``banned_until`` or for good. In a group the room
+        sees the usual notice. Retried after a network error or a ``5xx`` answer; when the
+        retry finds them gone, the first try worked.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The member.
+            ban: ``True`` bans them as well.
+            banned_until: When the ban ends: an aware `~datetime.datetime` or unix milliseconds.
+                ``None`` for good. Only with ``ban=True``.
+
+        Returns:
+            ``True`` when they were banned as well, ``False`` when only removed.
+
+        Raises:
+            ValidationError: ``banned_until`` without ``ban=True``, or a private chat.
+            ForbiddenError: The bot lacks the right, or the member is the owner or an admin.
+            MemberNotFoundError: Not a member, or hidden from the bot.
+        """
+        return self.execute(_spec.remove_member(chat_id, user_id, ban=ban, banned_until=banned_until))
+
+    def purge_member(self, chat_id: str | int, user_id: str | int, *, up_to: int | None = None) -> bool:
+        """Deletes everything one member wrote in a group or channel.
+
+        Calls ``DELETE /chats/{chatId}/members/{userId}/messages``. It needs the *delete
+        messages* right, as in the app. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The member.
+            up_to: Only up to this message ID. ``None`` deletes all of it.
+
+        Returns:
+            ``True`` once it is done.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+            MemberNotFoundError: No such person.
+        """
+        return self.execute(_spec.purge_member(chat_id, user_id, up_to=up_to))
+
+    def get_bans(self, chat_id: str | int) -> list[Ban]:
+        """Lists who is banned from a group or channel.
+
+        Calls ``GET /chats/{chatId}/bans``. It needs the *ban users* right. Retried after a
+        network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The bans.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+        """
+        bans: list[Ban] = self.execute(_spec.get_bans(chat_id))
+        return bans
+
+    def unban(self, chat_id: str | int, user_id: str | int) -> bool:
+        """Lifts a ban: the person can come back through a link.
+
+        Calls ``DELETE /chats/{chatId}/bans/{userId}``. It needs the *ban users* right. Nobody
+        is put back in. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The person.
+
+        Returns:
+            ``True`` when there was a ban, ``False`` when there was none.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+        """
+        return self.execute(_spec.unban(chat_id, user_id))
+
+    def get_invites(self, chat_id: str | int) -> list[Invite]:
+        """Lists the invite links of a group or channel.
+
+        Calls ``GET /chats/{chatId}/invites``. An admin with the *invite links* right may, and
+        so may a member the group lets add people. Retried after a network error or a ``5xx``
+        answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The links.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot may not manage links here.
+        """
+        invites: list[Invite] = self.execute(_spec.get_invites(chat_id))
+        return invites
+
+    def create_invite(
+        self,
+        chat_id: str | int,
+        *,
+        label: str | None = None,
+        expires_at: datetime | int | None = None,
+        max_uses: int | None = None,
+        needs_approval: bool | None = None,
+    ) -> Invite:
+        """Makes an invite link.
+
+        Calls ``POST /chats/{chatId}/invites``, with the right of `get_invites`. A public chat
+        already has its link, its handle. With ``needs_approval`` whoever uses the link asks
+        first, and the bots that may let people in get a ``join_request``. Not repeated after a
+        network error: a lost answer would otherwise make two links.
+
+        Args:
+            chat_id: The group or channel.
+            label: A name for the link, up to 48 characters.
+            expires_at: When it stops working: an aware `~datetime.datetime` or unix
+                milliseconds. ``None`` for never.
+            max_uses: How many people may use it, 1 to 100000. ``None`` for no limit.
+            needs_approval: ``True`` makes people ask before they come in.
+
+        Returns:
+            The new link.
+
+        Raises:
+            ValidationError: A value out of range, or a private chat.
+            ForbiddenError: The bot may not make links here.
+            ChatIsPublicError: The chat is public: its handle is its link.
+        """
+        return self.execute(
+            _spec.create_invite(
+                chat_id, label=label, expires_at=expires_at, max_uses=max_uses, needs_approval=needs_approval
+            )
+        )
+
+    def revoke_invite(self, chat_id: str | int, code: str) -> bool:
+        """Revokes an invite link.
+
+        Calls ``DELETE /chats/{chatId}/invites/{code}``. It needs the *invite links* right.
+        Retried after a network error or a ``5xx`` answer; when the retry finds the link gone,
+        the first try worked.
+
+        Args:
+            chat_id: The group or channel.
+            code: The link's code, `Invite.code`.
+
+        Returns:
+            ``True`` once it is revoked.
+
+        Raises:
+            ValidationError: A private chat, or not a code.
+            ForbiddenError: The bot lacks the right.
+            InviteNotFoundError: No such link in this chat.
+        """
+        return self.execute(_spec.revoke_invite(chat_id, code))
+
+    def get_join_requests(self, chat_id: str | int) -> list[JoinRequest]:
+        """Lists who asked to come into a group or channel.
+
+        Calls ``GET /chats/{chatId}/requests``. It needs the *add members* right. Retried after
+        a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            The requests waiting.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot lacks the right.
+        """
+        requests: list[JoinRequest] = self.execute(_spec.get_join_requests(chat_id))
+        return requests
+
+    def decide_join_request(self, chat_id: str | int, user_id: str | int, approve: bool) -> bool:
+        """Lets somebody in who asked, or turns them away.
+
+        Calls ``POST /chats/{chatId}/requests/{userId}``. It needs the *add members* right, and
+        only works for somebody who asked: it is never a way round a person's "don't add me
+        to groups". Retried after a network error or a ``5xx`` answer; when the retry finds the
+        request gone, the first try worked.
+
+        Args:
+            chat_id: The group or channel.
+            user_id: The person who asked.
+            approve: ``True`` lets them in, ``False`` turns them away.
+
+        Returns:
+            ``approve``, as the server confirms it.
+
+        Raises:
+            ValidationError: A private chat, or ``approve`` is not a bool.
+            ForbiddenError: The bot lacks the right.
+            JoinRequestNotFoundError: They have no request waiting.
+            ChatFullError: The chat can't take anybody else. The request stays, to
+                be decided when there is room.
+        """
+        return self.execute(_spec.decide_join_request(chat_id, user_id, approve))
+
+    def set_comments(
+        self, chat_id: str | int, enabled: bool, *, signing: bool | None = None, outside: bool | None = None
+    ) -> Chat:
+        """Turns a channel's comments on or off.
+
+        Calls ``PATCH /chats/{chatId}/comments``. It needs the *manage comments* right. Retried
+        after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+            enabled: ``True`` turns the comments on.
+            signing: ``True`` lets the admins comment under their own name. Left out, the server
+                takes it as ``False``.
+            outside: ``True`` lets people who aren't subscribed comment on a public readable
+                channel. Left out, it stays as it is.
+
+        Returns:
+            The channel with the new settings.
+
+        Raises:
+            ValidationError: Not a channel.
+            ForbiddenError: The bot lacks the right.
+        """
+        return self.execute(_spec.set_comments(chat_id, enabled, signing=signing, outside=outside))
+
+    def set_post_comments(self, chat_id: str | int, post_id: int, comments_off: bool) -> bool:
+        """Closes or opens again the comments of one post, whatever the channel says.
+
+        Calls ``PATCH /chats/{chatId}/posts/{postId}``. It needs the *manage comments* right.
+        Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+            post_id: The post, one the bot was handed.
+            comments_off: ``True`` closes them, ``False`` opens them.
+
+        Returns:
+            Whether the post's comments are closed now.
+
+        Raises:
+            ValidationError: Not a channel.
+            ForbiddenError: The bot lacks the right.
+            MessageNotFoundError: No such post, or one the bot was never handed.
+        """
+        return self.execute(_spec.set_post_comments(chat_id, post_id, comments_off))
+
+    def get_channel_stats(self, chat_id: str | int) -> ChannelStats:
+        """Fetches a channel's numbers: subscribers coming and going, views per post.
+
+        Calls ``GET /chats/{chatId}/stats``. For its admins. No words: the best posts come by
+        ID. Retried after a network error or a ``5xx`` answer.
+
+        Args:
+            chat_id: The channel.
+
+        Returns:
+            The numbers.
+
+        Raises:
+            ValidationError: Not a channel.
+            ForbiddenError: The bot is not one of the channel's admins.
+        """
+        return self.execute(_spec.get_channel_stats(chat_id))
+
+    def set_chat_photo(self, chat_id: str | int, data: bytes, *, limit: int = UPLOAD_MAX) -> Picture:
+        """Changes the picture of a group or channel.
+
+        Calls ``PUT /chats/{chatId}/photo``, as ``multipart/form-data``. A PNG, JPEG or WebP, or
+        a short MP4 or WebM clip, judged by its bytes. Whoever may change the chat's info may:
+        an admin with *change info*, or a member the group lets. The picture it replaces stays
+        in the chat's album. Not repeated after a network error: a lost answer would put the
+        picture up twice.
+
+        Args:
+            chat_id: The group or channel.
+            data: The picture's bytes.
+            limit: The largest file accepted before anything is sent, in bytes. The server has
+                a lower limit of its own for pictures.
+
+        Returns:
+            Where the new picture is, and what it turned out to be.
+
+        Raises:
+            ValidationError: Not bytes, too large, or a private chat.
+            ForbiddenError: The bot may not change the chat's info.
+            PayloadTooLargeError: The picture is over the server's limit.
+            BadRequestError: Not a picture or a clip (status ``415``).
+        """
+        return self.execute(_spec.set_chat_photo(chat_id, data, limit=limit))
+
+    def delete_chat_photo(self, chat_id: str | int) -> bool:
+        """Removes the picture of a group or channel.
+
+        Calls ``DELETE /chats/{chatId}/photo``, with the right of `set_chat_photo`. The current
+        picture leaves the album and the one before it, if any, is worn again. Not repeated
+        after a network error: a second delete would take that one off too.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            ``True`` when there was a picture to remove.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot may not change the chat's info.
+        """
+        return self.execute(_spec.delete_chat_photo(chat_id))
+
+    def set_chat_banner(self, chat_id: str | int, data: bytes, *, limit: int = UPLOAD_MAX) -> Picture:
+        """Changes the banner of a group or channel, like `set_chat_photo`.
+
+        Calls ``PUT /chats/{chatId}/banner``. Not repeated after a network error.
+
+        Args:
+            chat_id: The group or channel.
+            data: The banner's bytes: a PNG, JPEG or WebP, or a short MP4 or WebM clip.
+            limit: The largest file accepted before anything is sent, in bytes.
+
+        Returns:
+            Where the new banner is, and what it turned out to be.
+
+        Raises:
+            ValidationError: Not bytes, too large, or a private chat.
+            ForbiddenError: The bot may not change the chat's info.
+            PayloadTooLargeError: The banner is over the server's limit.
+            BadRequestError: Not a picture or a clip (status ``415``).
+        """
+        return self.execute(_spec.set_chat_banner(chat_id, data, limit=limit))
+
+    def delete_chat_banner(self, chat_id: str | int) -> bool:
+        """Removes the banner of a group or channel, like `delete_chat_photo`.
+
+        Calls ``DELETE /chats/{chatId}/banner``. Not repeated after a network error.
+
+        Args:
+            chat_id: The group or channel.
+
+        Returns:
+            ``True`` when there was a banner to remove.
+
+        Raises:
+            ValidationError: A private chat.
+            ForbiddenError: The bot may not change the chat's info.
+        """
+        return self.execute(_spec.delete_chat_banner(chat_id))
 
     # --- media ---
 

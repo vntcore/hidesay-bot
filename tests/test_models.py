@@ -500,7 +500,8 @@ def me_json(**fields: Any) -> dict[str, Any]:
         "description": None,
         "mode": "protected",
         "fingerprint": "AB" * 20,
-        "privacyMode": False,
+        "lastName": "Station",
+        "usernames": ["forecastbot", ""],
         "allowGroups": False,
         "status": "paused",
         "webhook": {"url": "https://bot.example.org/hook", "hasSecret": True, "failures": 2, "lastError": "timeout"},
@@ -518,7 +519,10 @@ def test_bot_info_from_json() -> None:
     assert me.protected
     assert me.status is BotStatus.PAUSED
     assert me.paused
-    assert (me.fingerprint, me.privacy_mode, me.allow_groups, me.queued) == ("AB" * 20, False, False, 4)
+    assert (me.fingerprint, me.allow_groups, me.queued) == ("AB" * 20, False, 4)
+    assert (me.last_name, me.usernames, me.handles) == ("Station", ("forecastbot",), ("testbot", "forecastbot"))
+    # what a room lets the bot read is the room's, not the bot's: nothing about it here
+    assert not hasattr(me, "privacy_mode")
     assert (me.webhook.url, me.webhook.has_secret, me.webhook.failures, me.webhook.last_error) == (
         "https://bot.example.org/hook",
         True,
@@ -531,7 +535,8 @@ def test_bot_info_from_json() -> None:
 def test_bot_info_defaults_when_the_server_leaves_things_out() -> None:
     me = BotInfo.from_json({"id": "B10000412"})
     assert (me.username, me.name, me.mode, me.status) == ("", "", ChatMode.OPEN, BotStatus.ACTIVE)
-    assert (me.privacy_mode, me.allow_groups, me.queued, me.fingerprint) == (True, True, 0, None)
+    assert (me.allow_groups, me.queued, me.fingerprint, me.usernames, me.last_name) == (True, 0, None, (), None)
+    assert me.handles == ()
     assert me.webhook.url is None
     assert not me.webhook.has_secret
     assert me.limits == Limits()
@@ -571,6 +576,9 @@ LIMIT_NAMES = {
     "api_calls_per_minute": "apiCallsPerMinute",
     "commands_per_scope": "commandsPerScope",
     "command_description_max": "commandDescriptionMax",
+    "upload_bytes_max": "uploadBytesMax",
+    "uploads_per_minute": "uploadsPerMinute",
+    "history_limit_max": "historyLimitMax",
 }
 
 

@@ -130,6 +130,7 @@ SAMPLES: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
             "markup": {"inlineKeyboard": [[{"text": "Hourly", "callbackData": "hourly"}]]},
             "silent": True,
             "send_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+            "mentions": ["10000055"],
         },
     ),
     "edit_message": (("10007781", 1001, "hello again"), {"markup": None}),
@@ -145,6 +146,72 @@ SAMPLES: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     "get_user_key": (("10000055",), {}),
     "revoke_token": ((), {}),
     "get_web_bot_key": ((), {}),
+    "delete_messages": (("G10009100", [1001, 1002]), {}),
+    "forward_message": (
+        ("C10009200", "G10009100", 1001),
+        {"hide_sender": True, "silent": True, "send_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff"},
+    ),
+    "set_reaction": (("10007781", 1001, "👍"), {}),
+    "remove_reaction": (("10007781", 1001), {}),
+    "upload_file": ((b"\xff\xd8\xff",), {}),
+    "get_sticker": ((77, "0f3c5a3e-1111-2222-3333-444455556666"), {}),
+    "get_chats": ((), {}),
+    "get_history": (("G10009100",), {"before": 1001, "limit": 20}),
+    "get_message": (("G10009100", 1001), {}),
+    "read_chat": (("10007781", 1001), {}),
+    "unpin_all": (("G10009100",), {}),
+    "pin_message": (("G10009100", 1001), {}),
+    "unpin_message": (("G10009100", 1001), {}),
+    "get_comments": (("C10009200", 1001), {"before": 1100, "limit": 20}),
+    "send_comment": (
+        ("C10009200", 1001, "thanks"),
+        {"reply_to": 1101, "as_author": True, "mentions": ["10000055"]},
+    ),
+    "get_user": (("10000055",), {}),
+    "update_chat": (
+        ("G10009100",),
+        {
+            "title": "Hikers",
+            "description": None,
+            "permissions": {"send_media": False},
+            "slow_mode_seconds": 30,
+            "members_hidden": True,
+            "protect_content": True,
+            "reactions_enabled": True,
+            "allowed_reactions": ["👍"],
+            "auto_delete_seconds": 86400,
+        },
+    ),
+    "update_member": (
+        ("G10009100", "10000055"),
+        {
+            "role": "admin",
+            "admin_rights": ["delete_messages"],
+            "restrictions": ["send_media"],
+            "restricted_until": 1791000000000,
+            "custom_title": "guide",
+            "anonymous": False,
+        },
+    ),
+    "remove_member": (("G10009100", "10000055"), {"ban": True, "banned_until": 1791000000000}),
+    "purge_member": (("G10009100", "10000055"), {"up_to": 1001}),
+    "get_bans": (("G10009100",), {}),
+    "unban": (("G10009100", "10000055"), {}),
+    "get_invites": (("G10009100",), {}),
+    "create_invite": (
+        ("G10009100",),
+        {"label": "flyer", "expires_at": 1791000000000, "max_uses": 100, "needs_approval": True},
+    ),
+    "revoke_invite": (("G10009100", "Zm9vYmFy"), {}),
+    "get_join_requests": (("G10009100",), {}),
+    "decide_join_request": (("G10009100", "10000055", True), {}),
+    "set_comments": (("C10009200", True), {"signing": True, "outside": False}),
+    "set_post_comments": (("C10009200", 1001, True), {}),
+    "get_channel_stats": (("C10009200",), {}),
+    "set_chat_photo": (("G10009100", b"\x89PNG"), {}),
+    "delete_chat_photo": (("G10009100",), {}),
+    "set_chat_banner": (("G10009100", b"\x89PNG"), {}),
+    "delete_chat_banner": (("G10009100",), {}),
 }
 
 
@@ -225,7 +292,13 @@ def test_each_operation_is_built_the_way_the_spec_declares_it(
     assert set(call.params or {}) == {p["name"] for p in declared if p["in"] == "query"}
 
     body = operation.get("requestBody")
-    if call.has_body:
+    if call.files is not None:
+        assert body is not None
+        assert not call.has_body
+        schema = resolve(body["content"]["multipart/form-data"]["schema"])
+        assert set(call.files) <= set(schema["properties"])
+        assert set(schema.get("required", ())) <= set(call.files)
+    elif call.has_body:
         assert body is not None
         schema = resolve(body["content"]["application/json"]["schema"])
         assert set(call.body) <= set(schema["properties"])

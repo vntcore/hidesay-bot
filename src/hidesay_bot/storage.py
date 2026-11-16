@@ -137,7 +137,7 @@ class Storage(ABC):
 
         Called at every start, before the bot uses the storage for anything else. Everything
         after it (the high-water mark, the pending and failed updates, the pins, the lock)
-        belongs to this bot only: a store shared by several bots keeps them apart by this ID.
+        belongs to this bot only: a store shared by several bots keeps them apart by this number.
         After `close`, the bot may call it again when it starts again.
 
         `Bot.failed_updates`, `Bot.retry_failed`, `Bot.discard_failed` and `Bot.trust_key`
@@ -145,7 +145,7 @@ class Storage(ABC):
         not open. `SQLiteStorage` then raises `StorageError`.
 
         Args:
-            bot_id: The bot's user ID, read from its token.
+            bot_id: The number in the bot's token.
 
         Raises:
             StorageError: The store can't be opened. The bot does not start.
@@ -443,7 +443,7 @@ class MemoryStorage(Storage):
         starts again from nothing, rather than mix two queues.
 
         Args:
-            bot_id: The bot's user ID, read from its token.
+            bot_id: The number in the bot's token.
         """
         with self._lock:
             if self._bot_id is not None and self._bot_id != bot_id:
@@ -758,12 +758,12 @@ class SQLiteStorage(Storage):
     - Writes of several statements run in one ``BEGIN IMMEDIATE`` transaction. Worker processes
       that share the file wait for each other there, so two of them never accept the same update.
     - An operating system lock on a file next to the database, ``<path>.<bot id>.lock`` (for
-      example ``bot.db.42.lock``), lets one process at a time run a bot's handlers. The system
+      example ``bot.db.48213907.lock``), lets one process at a time run a bot's handlers. The system
       releases it when the process dies, even in a crash. A second process that polls the same
       bot gets `PollingConflictError`; webhook workers share the file, and the one that holds
       the lock runs the handlers.
-    - One file can hold several bots: each bot's rows are kept apart by its ID, and each bot has
-      its own lock file.
+    - One file can hold several bots: each bot's rows are kept apart by the number in its token,
+      and each bot has its own lock file.
     - The failed list keeps the newest `max_failed` updates per bot, each error cut to 4000
       characters.
     - The methods that read or write updates and pins raise `StorageError` while the storage is
@@ -834,7 +834,7 @@ class SQLiteStorage(Storage):
         another bot, the storage releases the first bot's lock and works on the new bot's rows.
 
         Args:
-            bot_id: The bot's user ID, read from its token.
+            bot_id: The number in the bot's token.
 
         Raises:
             StorageError: The file can't be opened as a SQLite database.

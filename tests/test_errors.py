@@ -89,6 +89,15 @@ EXPECTED: dict[str, tuple[type[APIError], int, type[APIError]]] = {
     "not_found": (EndpointNotFoundError, 404, NotFoundError),
     "internal": (ServerError, 500, ServerError),
     "try_again": (ServerError, 503, ServerError),
+    "bad_media": (errors.BadMediaError, 400, BadRequestError),
+    "chat_is_protected": (errors.ChatIsProtectedError, 400, BadRequestError),
+    "reads_all_needed": (errors.ReadsAllNeededError, 403, ForbiddenError),
+    "comments_closed": (errors.CommentsClosedError, 403, ForbiddenError),
+    "sticker_not_found": (errors.StickerNotFoundError, 404, NotFoundError),
+    "invite_not_found": (errors.InviteNotFoundError, 404, NotFoundError),
+    "request_not_found": (errors.JoinRequestNotFoundError, 404, NotFoundError),
+    "chat_is_public": (errors.ChatIsPublicError, 409, ConflictError),
+    "chat_full": (errors.ChatFullError, 409, ConflictError),
 }
 
 

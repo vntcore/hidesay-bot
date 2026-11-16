@@ -26,19 +26,24 @@ Ready-made filters, to use as they are:
 - `private`, `group`, `channel`: the kind of chat.
 - `has_text`: the message has text.
 - `has_media`: the message has attachments.
+- `has_sticker`: the message is a sticker.
+- `forwarded`: the message is a forward.
+- `comment`: the message is a comment under a channel post.
 - `encrypted`: the message came end-to-end encrypted.
 - `signed`: encrypted, with a valid signature from the sender's key.
 - `reply`: the message answers another one.
-- `mentioned`: the text mentions the bot's ``@handle``.
+- `mentioned`: the text names the bot, by any of its handles or picked from the list.
 
 Filters you make with your own values:
 
 - `text` (``f.text("yes", "no")``): the whole text is one of the values.
 - `regex` (``f.regex(r"^order [0-9]+$")``): the text, or a button's data, contains a match.
 - `command` (``f.command("start", "help")``): one of these commands; with no names, any.
-- `user` (``f.user(42, "@anna")``): from one of these people.
-- `chat` (``f.chat(7781, "@news")``): in one of these chats.
+- `user` (``f.user("48213907", "@anna")``): from one of these people.
+- `chat` (``f.chat("G48213907", "@news")``): in one of these chats.
 - `callback_data` (``f.callback_data(prefix="vote:")``): a button press with this data.
+- `reaction` (``f.reaction("👍")``): a reaction put with one of these emoji.
+- `changed` (``f.changed("title")``): a change of the room that moved one of these settings.
 
 `parse_command` reads a command the way the server does.
 """
@@ -52,22 +57,36 @@ from dataclasses import dataclass
 from typing import Any
 
 from ._validate import JS_SPACE
-from .models import CallbackQueryBase, ChatKind, ChatRef, MessageBase, SignatureStatus, User
+from .models import (
+    CallbackQueryBase,
+    ChatKind,
+    ChatRef,
+    ChatUpdated,
+    MessageBase,
+    ReactionUpdate,
+    SignatureStatus,
+    User,
+)
 
 __all__ = [
     "Filter",
     "ParsedCommand",
     "callback_data",
+    "changed",
     "channel",
     "chat",
     "command",
+    "comment",
     "encrypted",
+    "forwarded",
     "group",
     "has_media",
+    "has_sticker",
     "has_text",
     "mentioned",
     "parse_command",
     "private",
+    "reaction",
     "regex",
     "reply",
     "signed",
@@ -257,10 +276,13 @@ class FilterContext:
     positional parameters.
 
     Attributes:
-        bot_username: The bot's handle, without ``@``. ``None`` until the bot has read its own
-            profile from the server, which it does before the first update.
+        bot_username: The bot's main handle, without ``@``. ``None`` until the bot has read its
+            own profile from the server, which it does before the first update.
         update: The whole `~hidesay_bot.Update` being routed.
         bot: The `~hidesay_bot.Bot` or `~hidesay_bot.SyncBot` that runs the filter.
+        bot_usernames: Every handle the bot answers to, the main one first. Each one reaches
+            the bot like the main one: in a mention, after the ``@`` of a command.
+        bot_id: The bot's ID, ``"B48213907"``, or ``None`` before it is known.
 
     Example:
         Messages that start with the bot's handle::
@@ -276,6 +298,14 @@ class FilterContext:
     bot_username: str | None
     update: Any
     bot: Any
+    bot_usernames: tuple[str, ...] = ()
+    bot_id: str | None = None
+
+    @property
+    def handles(self) -> tuple[str, ...]:
+        """Every handle of the bot in lower case, from `bot_usernames`, or `bot_username` alone."""
+        names = self.bot_usernames or ((self.bot_username,) if self.bot_username else ())
+        return tuple(n.lower() for n in names if n)
 
 
 def _accepts_context(func: Callable[..., Any]) -> bool:
@@ -438,6 +468,16 @@ The handler still gets it decrypted. Only messages match.
 """
 reply = Filter(lambda event: isinstance(event, MessageBase) and event.reply_to is not None, "reply")
 """Matches a message that answers (quotes) another message."""
+has_sticker = Filter(lambda event: isinstance(event, MessageBase) and event.sticker is not None, "has_sticker")
+"""Matches a message that is a sticker."""
+forwarded = Filter(lambda event: isinstance(event, MessageBase) and event.forward is not None, "forwarded")
+"""Matches a message that was forwarded from somewhere else.
+
+In an encrypted chat it is known once the bot opened the message, which it does before any
+filter runs.
+"""
+comment = Filter(lambda event: isinstance(event, MessageBase) and event.thread_root is not None, "comment")
+"""Matches a comment under a channel post. Comments reach `hidesay_bot.Router.on_comment`."""
 signed = Filter(
     lambda event: (
         isinstance(event, MessageBase)
@@ -523,9 +563,11 @@ def command(*names: str, ignore_mention: bool = False) -> Filter:
     """Makes a filter for the commands ``/name`` and ``/name@yourbot``.
 
     The command must start the text and be followed by whitespace or nothing (see
-    `parse_command`). A command addressed to another bot, such as ``/start@otherbot``, does
-    not match unless ``ignore_mention`` is ``True``. `hidesay_bot.Router.command` registers its
-    handlers with this filter; use the filter directly to combine it with others.
+    `parse_command`). ``/start@yourbot`` matches with any of the bot's handles, the extra ones
+    the owner added included. A command addressed to another bot, such as
+    ``/start@otherbot``, does not match unless ``ignore_mention`` is ``True``.
+    `hidesay_bot.Router.command` registers its handlers with this filter; use the filter
+    directly to combine it with others.
 
     Args:
         *names: The command names, each 1 to 32 letters, digits or ``_``, with or without
@@ -549,10 +591,8 @@ def command(*names: str, ignore_mention: bool = False) -> Filter:
         parsed = parse_command(getattr(event, "text", None))
         if parsed is None or (wanted and parsed.name not in wanted):
             return False
-        if parsed.mention and not ignore_mention:
-            me = (context.bot_username or "").lower()
-            if parsed.mention.lower() != me:
-                return False
+        if parsed.mention and not ignore_mention and parsed.mention.lower() not in context.handles:
+            return False
         return {"command": parsed}
 
     return Filter(check, f"command{tuple(sorted(wanted))!r}")
@@ -560,18 +600,79 @@ def command(*names: str, ignore_mention: bool = False) -> Filter:
 
 def _mentions_bot(event: Any, context: FilterContext) -> bool:
     body = getattr(event, "text", None)
-    handle = context.bot_username
-    if not isinstance(body, str) or not handle:
+    if not isinstance(body, str):
         return False
-    return re.search(rf"(^|[^a-z0-9_])@{re.escape(handle)}(?![a-z0-9_])", body, re.IGNORECASE) is not None
+    # the tag the app writes for a name picked from the list: @[Weather](uB48213907)
+    if context.bot_id and re.search(rf"@\[[^\[\]\n]{{1,64}}\]\(u{re.escape(context.bot_id)}\)", body):
+        return True
+    handles = context.handles
+    if not handles:
+        return False
+    names = "|".join(re.escape(h) for h in handles)
+    return re.search(rf"(^|[^a-z0-9_])@(?:{names})(?![a-z0-9_])", body, re.IGNORECASE) is not None
 
 
 mentioned = Filter(_mentions_bot, "mentioned")
-"""Matches a message whose text mentions the bot's ``@handle``.
+"""Matches a message whose text names the bot.
 
-The rule is the one the server uses in groups: the ``@handle`` can be anywhere in the text, in
-any case, but not glued to a letter, a digit or ``_`` on either side.
+The rule is the one the server uses in groups: an ``@handle`` of the bot, any of them, anywhere
+in the text, in any case, but not glued to a letter, a digit or ``_`` on either side; or the
+tag the app writes when somebody picks the bot's name from the list (``@[Weather](uB48213907)``).
 """
+
+
+def reaction(*emoji: str) -> Filter:
+    """Makes a filter for reactions put with one of these emoji.
+
+    It looks at the emoji the person has on the message now
+    (`~hidesay_bot.ReactionUpdate.new`), so a reaction taken back never matches.
+    `hidesay_bot.Router.on_reaction` does the same with its ``emoji`` argument.
+
+    Args:
+        *emoji: The emoji to take. With none, any reaction put or changed matches.
+
+    Returns:
+        A filter that matches a `~hidesay_bot.ReactionUpdate` whose new emoji is one of them.
+
+    Example:
+        A thumbs up on one of the bot's messages::
+
+            @bot.on_reaction(f.reaction("👍", "❤️"))
+            async def liked(reaction): ...
+    """
+    wanted = set(emoji)
+
+    def check(event: Any) -> bool:
+        if not isinstance(event, ReactionUpdate) or event.new is None:
+            return False
+        return not wanted or event.new in wanted
+
+    return Filter(check, f"reaction{tuple(sorted(wanted))!r}")
+
+
+def changed(*names: str) -> Filter:
+    """Makes a filter for changes of a group or channel that moved one of these settings.
+
+    Args:
+        *names: Names as `~hidesay_bot.ChatUpdated.changed` lists them, in the API's
+            spelling: ``"title"``, ``"description"``, ``"photo"``, ``"pinnedMessageIds"``,
+            ``"slowModeSeconds"``...
+
+    Returns:
+        A filter that matches a `~hidesay_bot.ChatUpdated` naming at least one of them.
+
+    Example:
+        Keep a copy of the pins::
+
+            @bot.on_chat_updated(f.changed("pinnedMessageIds"))
+            async def pins(update): ...
+    """
+    wanted = set(names)
+
+    def check(event: Any) -> bool:
+        return isinstance(event, ChatUpdated) and not wanted.isdisjoint(event.changed)
+
+    return Filter(check, f"changed{tuple(sorted(wanted))!r}")
 
 
 _ID_SHAPE = re.compile(r"[BGCbgc]?[1-9][0-9]{7}")

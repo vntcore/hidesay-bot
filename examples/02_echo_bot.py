@@ -3,8 +3,8 @@
     export HIDESAY_BOT_TOKEN="pgpbot_..."
     python examples/02_echo_bot.py
 
-In a group the bot only sees commands, replies to it and @mentions, unless its
-owner turned privacy mode off.
+In a group the bot only gets commands, replies to it and @mentions, unless an
+admin of the group lets it read every message.
 """
 
 from hidesay_bot import Bot

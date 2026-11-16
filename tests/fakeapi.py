@@ -89,6 +89,8 @@ class FakeChat:
     blocked: bool = False
     gone: bool = False
     me: dict[str, Any] = field(default_factory=lambda: {"status": "member", "rights": 255, "restrictedUntil": None})
+    # the rest of what GET /chats/{id} says about a group or channel, as the server names it
+    settings: dict[str, Any] = field(default_factory=dict)
 
     def ref(self) -> dict[str, Any]:
         if self.kind == "private":
@@ -111,7 +113,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
             "mode": "open",
             "fingerprint": None,
             "publicKey": None,
-            "privacyMode": True,
+            "usernames": [],
             "allowGroups": True,
             "status": "active",
             "queued": 0,
@@ -135,6 +137,17 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         self.web_bot_key = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
         self.poll_wait = 0.05
         self._arrived = threading.Event()
+        # what the bot was handed, per chat, as GET /chats/{id}/messages hands it back
+        self.handed: dict[str, dict[int, dict[str, Any]]] = {}
+        self.stickers: dict[int, dict[str, Any]] = {}
+        self.reactions: dict[int, dict[str, str]] = {}
+        self.pins: dict[str, list[int]] = {}
+        self.profiles: dict[str, dict[str, Any]] = {}
+        self.invites: dict[str, list[dict[str, Any]]] = {}
+        self.bans: dict[str, list[dict[str, Any]]] = {}
+        self.join_requests: dict[str, list[dict[str, Any]]] = {}
+        self.read_marks: dict[str, int] = {}
+        self.stats: dict[str, Any] = {}
 
     # --- scripting ---
 
@@ -216,7 +229,15 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         else:
             message["text"] = text
             message["media"] = media or []
+        with self.lock:
+            self.handed.setdefault(chat.id, {})[message["id"]] = message
         return self.push("edited_message" if edited else "message", message=message)
+
+    def hand(self, chat_id: int | str, message: dict[str, Any]) -> dict[str, Any]:
+        """Files a message as handed to the bot, without an update: history, forwards."""
+        with self.lock:
+            self.handed.setdefault(self.key(chat_id), {})[message["id"]] = message
+        return message
 
     def push_callback(
         self, chat_id: int | str, message_id: int, data: str, *, from_id: int | str = 55, expires_in: float = 60
@@ -326,7 +347,11 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         url = urlsplit(str(request.url))
         query = {k: v[0] for k, v in parse_qs(url.query).items()}
         body: Any = None
-        if request.content:
+        files: dict[str, bytes] = {}
+        content_type = request.headers.get("content-type", "")
+        if content_type.startswith("multipart/form-data"):
+            files = multipart(request.content, content_type)
+        elif request.content:
             try:
                 body = json.loads(request.content)
             except ValueError:
@@ -338,6 +363,8 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
                     "path": url.path,
                     "query": query,
                     "json": body,
+                    "files": files,
+                    "raw": request.content if files else None,
                     "headers": dict(request.headers),
                 }
             )
@@ -357,6 +384,11 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         if self.me["status"] != "active" and (method, path) not in paused_ok:
             return err(403, "bot_paused", "this bot is paused by its owner")
         with self.lock:
+            if files or (method, path) == ("POST", "/attachments"):
+                return self._files(method, path, files)
+            routed = self._newer(method, path, query, body if isinstance(body, dict) else {})
+            if routed is not None:
+                return routed
             return self._dispatch(method, path, query, body if isinstance(body, dict) else {})
 
     def _dispatch(self, method: str, path: str, query: dict[str, str], body: dict[str, Any]) -> httpx2.Response:
@@ -494,7 +526,10 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
             if row["chatId"] != chat.id:
                 return err(409, "conflict", "sendId was used in another chat")
             return ok(self._view(row), 200)
-        text = self._body(chat, body, optional=False)
+        if body.get("media") is not None or body.get("sticker") is not None:
+            text = self._wrap(chat, body)
+        else:
+            text = self._body(chat, body, optional=False)
         if isinstance(text, httpx2.Response):
             return text
         if chat.kind == "private" and chat.blocked:
@@ -505,11 +540,332 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
             "body": text,
             "replyTo": body.get("replyTo"),
             "markup": body.get("markup"),
+            "mentions": body.get("mentions"),
         }
+        self.messages[row["id"]] = row
+        self.handed.setdefault(chat.id, {})[row["id"]] = self._as_message(row)
+        if send_id:
+            self.send_ids[send_id] = row["id"]
+        return ok(self._view(row), 201)
+
+    def _wrap(self, chat: FakeChat, body: dict[str, Any]) -> httpx2.Response | str:
+        """What the server writes for files and stickers sent into a readable chat."""
+        if self._mode_of(chat) == "protected":
+            return err(
+                400,
+                "wrong_body_kind",
+                "this chat is end-to-end encrypted: seal the files and the envelope yourself and send armored",
+                expected="armored",
+            )
+        if body.get("sticker") is not None:
+            sticker = self.stickers.get(body["sticker"].get("id"))
+            if sticker is None:
+                return err(404, "sticker_not_found", "no such sticker, or it comes from a pack the bot can't use")
+            return MARK_STICKER + json.dumps(
+                {
+                    "id": sticker["id"],
+                    "packId": sticker["packId"],
+                    "mediaId": sticker["mediaId"],
+                    "emoji": sticker["emoji"],
+                }
+            )
+        items = []
+        for item in body["media"]:
+            if str(item.get("id", "")).lower() not in self.media:
+                return err(
+                    400, "bad_media", "media: every id has to be a file this bot uploaded with POST /attachments"
+                )
+            items.append(
+                {
+                    "media": item["id"].lower(),
+                    "kind": item["kind"],
+                    "mime": item.get("mime") or "application/octet-stream",
+                    "name": item.get("name"),
+                    "size": item.get("size") or 0,
+                    "w": item.get("width"),
+                    "h": item.get("height"),
+                    "dur": item.get("duration"),
+                    "plain": True,
+                    "thumb": item.get("thumb"),
+                    "sha256": item.get("sha256"),
+                }
+            )
+        cap = body.get("text")
+        if len(items) == 1:
+            return MARK_MEDIA + json.dumps({**items[0], "cap": cap})
+        return MARK_ALBUM + json.dumps({"items": items, "cap": cap})
+
+    def _as_message(self, row: dict[str, Any]) -> dict[str, Any]:
+        """One of the bot's own messages, as the history hands it back."""
+        message: dict[str, Any] = {
+            "id": row["id"],
+            "chat": self.chats[row["chatId"]].ref(),
+            "from": {"id": BOT, "username": "testbot", "firstName": "Test", "lastName": None, "isBot": True},
+            "date": 1791000000000,
+            "replyTo": row.get("replyTo"),
+            "threadRoot": row.get("threadRoot"),
+            "kind": "user",
+            "markup": row.get("markup"),
+        }
+        raw = row["body"]
+        if raw.startswith("-----BEGIN PGP MESSAGE-----"):
+            message["armored"] = raw
+        else:
+            message.update(read_body(raw))
+        return message
+
+    def _files(self, method: str, path: str, files: dict[str, bytes]) -> httpx2.Response:
+        """The multipart routes: an attachment, a chat's picture or banner."""
+        data = files.get("file")
+        if data is None:
+            return err(400, "bad_request", "send the file as multipart/form-data, in a field called file")
+        if (method, path) == ("POST", "/attachments"):
+            media_id = str(uuid.uuid4())
+            self.media[media_id] = data
+            return ok({"id": media_id, "url": f"/media/{media_id}", "size": len(data)}, 201)
+        m = re.fullmatch(r"/chats/([^/]+)/(photo|banner)", path)
+        if m and method == "PUT":
+            chat = self.chats.get(m.group(1))
+            if chat is None or chat.kind == "private":
+                return err(404, "chat_not_found", "no such chat, or the bot is not in it")
+            if not data.startswith((b"\x89PNG", b"\xff\xd8\xff")):
+                return err(415, "bad_request", "png, jpeg, webp, or an mp4/webm clip")
+            media_id = str(uuid.uuid4())
+            self.media[media_id] = data
+            chat.settings[f"{m.group(2) if m.group(2) == 'banner' else 'photo'}Url"] = f"/media/{media_id}"
+            mime = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+            return ok({"url": f"/media/{media_id}", "mime": mime}, 201)
+        return err(404, "not_found", "no such method")
+
+    def _newer(self, method: str, path: str, query: dict[str, str], body: dict[str, Any]) -> httpx2.Response | None:
+        """The operations of Bot API 2.0 past the first ones. None for a path that isn't one of them."""
+        if (method, path) == ("POST", "/messages/delete"):
+            chat_id = str(body.get("chatId"))
+            seen = self.handed.get(chat_id, {})
+            gone = [i for i in body.get("ids", []) if i in seen or i in self.messages]
+            for i in gone:
+                seen.pop(i, None)
+                self.messages.pop(i, None)
+            return ok({"deleted": gone})
+        if (method, path) == ("POST", "/messages/forward"):
+            return self._forward(body)
+        m = re.fullmatch(r"/messages/(\d+)/reaction", path)
+        if m:
+            chat_id = str(body.get("chatId") or query.get("chatId"))
+            message_id = int(m.group(1))
+            if message_id not in self.handed.get(chat_id, {}):
+                return err(404, "message_not_found", "no such message in this chat")
+            marks = self.reactions.setdefault(message_id, {})
+            if method == "PUT":
+                marks[BOT] = body["emoji"]
+                return ok(
+                    {"messageId": message_id, "reactions": [{"emoji": e, "mine": u == BOT} for u, e in marks.items()]}
+                )
+            return ok({"removed": marks.pop(BOT, None) is not None})
+        m = re.fullmatch(r"/stickers/(\d+)", path)
+        if m:
+            sticker = self.stickers.get(int(m.group(1)))
+            if sticker is None or (not sticker.get("public", True) and query.get("mediaId") != sticker["mediaId"]):
+                return err(404, "sticker_not_found", "no such sticker, or it comes from a pack the bot can't use")
+            return ok({k: v for k, v in sticker.items() if k != "public"} | {"url": f"/media/{sticker['mediaId']}"})
+        if (method, path) == ("GET", "/chats"):
+            return ok({"chats": [self._chat_view(c) for c in self.chats.values() if c.kind != "private"]})
+        m = re.fullmatch(r"/users/([^/]+)", path)
+        if m and method == "GET":
+            profile = self.profiles.get(m.group(1))
+            return ok(profile) if profile else err(404, "user_not_found", "no such user, or no chat in common")
+        m = re.fullmatch(r"/chats/([^/]+)(/.+)?", path)
+        if m:
+            chat = self.chats.get(m.group(1))
+            if chat is None or chat.gone:
+                return err(404, "chat_not_found", "no such chat, or the bot is not in it")
+            return self._room(method, chat, m.group(2) or "", query, body)
+        return None
+
+    def _chat_view(self, chat: FakeChat) -> dict[str, Any]:
+        view: dict[str, Any] = {**chat.ref(), "mode": self._mode_of(chat)}
+        if chat.kind == "private":
+            view.update(user=chat.peer, blocked=chat.blocked)
+            return view
+        view.update(
+            description=None,
+            memberCount=len(chat.members) or 3,
+            historyVisible=chat.history_visible,
+            slowModeSeconds=0,
+            pinnedMessageIds=self.pins.get(chat.id, []),
+            me=chat.me,
+        )
+        view.update(chat.settings)
+        return view
+
+    def _forward(self, body: dict[str, Any]) -> httpx2.Response:
+        source = self.chats.get(str(body.get("fromChatId")))
+        target = self.chats.get(str(body.get("chatId")))
+        if source is None or target is None:
+            return err(404, "chat_not_found", "no such chat, or the bot is not in it")
+        message = self.handed.get(source.id, {}).get(body.get("messageId"))
+        if message is None:
+            return err(404, "message_not_found", "no such message in this chat")
+        if "armored" in message or self._mode_of(source) == "protected" or self._mode_of(target) == "protected":
+            return err(400, "chat_is_protected", "an end-to-end encrypted message is forwarded on the bot's side")
+        send_id = body.get("sendId")
+        if send_id and send_id in self.send_ids:
+            return ok(self._view(self.messages[self.send_ids[send_id]]), 200)
+        row = {"id": self._new_message_id(), "chatId": target.id, "body": message.get("text") or "", "forward": body}
         self.messages[row["id"]] = row
         if send_id:
             self.send_ids[send_id] = row["id"]
         return ok(self._view(row), 201)
+
+    def _room(
+        self, method: str, chat: FakeChat, rest: str, query: dict[str, str], body: dict[str, Any]
+    ) -> httpx2.Response | None:
+        seen = self.handed.setdefault(chat.id, {})
+        if rest == "" and method == "GET":
+            return ok(self._chat_view(chat))
+        if rest == "" and method == "PATCH":
+            chat.settings.update({k: v for k, v in body.items() if k not in ("title", "permissions")})
+            if "title" in body:
+                chat.title = body["title"]
+            if "permissions" in body:
+                chat.settings["permissions"] = {**chat.settings.get("permissions", {}), **body["permissions"]}
+            return ok(self._chat_view(chat))
+        if rest == "/messages" and method == "GET":
+            before = int(query.get("before", 0))
+            limit = int(query.get("limit", 50))
+            listed = sorted(
+                (m for i, m in seen.items() if m.get("threadRoot") is None and (not before or i < before)),
+                key=lambda m: -m["id"],
+            )
+            return ok({"messages": listed[:limit]})
+        m = re.fullmatch(r"/messages/(\d+)", rest)
+        if m and method == "GET":
+            found = seen.get(int(m.group(1)))
+            return ok(found) if found else err(404, "message_not_found", "no such message in this chat")
+        if rest == "/read" and method == "POST":
+            if chat.kind != "private" and not chat.me.get("readsAll"):
+                return err(403, "reads_all_needed", "only a bot the room lets read every message can mark it read")
+            self.read_marks[chat.id] = body.get("upTo") or max(seen, default=0)
+            return ok({"lastReadId": self.read_marks[chat.id]})
+        if rest == "/pins" and method == "DELETE":
+            self.pins[chat.id] = []
+            return ok({"pinnedMessageIds": []})
+        m = re.fullmatch(r"/pins/(\d+)", rest)
+        if m:
+            message_id = int(m.group(1))
+            if message_id not in seen:
+                return err(404, "message_not_found", "no such message in this chat")
+            pins = self.pins.setdefault(chat.id, [])
+            if method == "PUT" and message_id not in pins:
+                pins.append(message_id)
+            elif method == "DELETE" and message_id in pins:
+                pins.remove(message_id)
+            return ok({"pinnedMessageIds": pins})
+        m = re.fullmatch(r"/posts/(\d+)/comments", rest)
+        if m:
+            post = int(m.group(1))
+            if post not in seen:
+                return err(404, "message_not_found", "no such post in this channel")
+            if method == "GET":
+                comments = sorted((c for c in seen.values() if c.get("threadRoot") == post), key=lambda c: -c["id"])
+                return ok({"open": not chat.settings.get("commentsClosed", False), "messages": comments})
+            if chat.settings.get("commentsClosed"):
+                return err(403, "comments_closed", "comments are closed here")
+            text = self._body(chat, body, optional=False)
+            if isinstance(text, httpx2.Response):
+                return text
+            row = {
+                "id": self._new_message_id(),
+                "chatId": chat.id,
+                "body": text,
+                "replyTo": body.get("replyTo"),
+                "threadRoot": post,
+            }
+            self.messages[row["id"]] = row
+            seen[row["id"]] = self._as_message(row)
+            view = self._view(row)
+            view["threadRoot"] = post
+            return ok(view, 201)
+        m = re.fullmatch(r"/posts/(\d+)", rest)
+        if m and method == "PATCH":
+            return ok({"messageId": int(m.group(1)), "commentsOff": body["commentsOff"]})
+        if rest == "/comments" and method == "PATCH":
+            chat.settings.update(commentsEnabled=body["enabled"], commentSigning=body.get("signing", False))
+            return ok(self._chat_view(chat))
+        if rest in ("/photo", "/banner") and method == "DELETE":
+            key = "photoUrl" if rest == "/photo" else "bannerUrl"
+            return ok({"removed": chat.settings.pop(key, None) is not None})
+        m = re.fullmatch(r"/members/([^/]+)/messages", rest)
+        if m and method == "DELETE":
+            return ok({"purged": True})
+        m = re.fullmatch(r"/members/([^/]+)", rest)
+        if m and method in ("PATCH", "DELETE"):
+            member = next((x for x in chat.members if x["user"]["id"] == m.group(1)), None)
+            if member is None:
+                return err(404, "member_not_found", "not a member of this chat")
+            if method == "PATCH":
+                if body.get("role") == "admin":
+                    member.update(status="admin", can=dict.fromkeys(body.get("adminRights", []), True))
+                if "restrictions" in body:
+                    member.update(status="restricted", restrictedUntil=body.get("restrictedUntil"))
+                if "customTitle" in body:
+                    member["customTitle"] = body["customTitle"]
+                return ok(member)
+            chat.members.remove(member)
+            banned = bool(body.get("ban") or query.get("ban") == "true")
+            if banned:
+                self.bans.setdefault(chat.id, []).append(
+                    {"user": member["user"], "bannedUntil": body.get("bannedUntil"), "bannedAt": 1791000000000}
+                )
+            return ok({"removed": True, "banned": banned})
+        if rest == "/bans" and method == "GET":
+            return ok({"bans": self.bans.get(chat.id, [])})
+        m = re.fullmatch(r"/bans/([^/]+)", rest)
+        if m and method == "DELETE":
+            bans = self.bans.get(chat.id, [])
+            kept = [b for b in bans if b["user"]["id"] != m.group(1)]
+            self.bans[chat.id] = kept
+            return ok({"lifted": len(kept) != len(bans)})
+        if rest == "/invites":
+            invites = self.invites.setdefault(chat.id, [])
+            if method == "GET":
+                return ok({"invites": invites})
+            if chat.username:
+                return err(409, "chat_is_public", "this chat is public: its name is the link")
+            code = f"code{len(invites) + 1}"
+            invite = {
+                "code": code,
+                "url": f"https://hidesay.test/join/{code}",
+                "label": body.get("label"),
+                "expiresAt": body.get("expiresAt"),
+                "maxUses": body.get("maxUses"),
+                "uses": 0,
+                "needsApproval": bool(body.get("needsApproval")),
+                "createdAt": 1791000000000,
+            }
+            invites.append(invite)
+            return ok(invite, 201)
+        m = re.fullmatch(r"/invites/([^/]+)", rest)
+        if m and method == "DELETE":
+            invites = self.invites.get(chat.id, [])
+            found = next((i for i in invites if i["code"] == m.group(1)), None)
+            if found is None:
+                return err(404, "invite_not_found", "no such link in this chat")
+            invites.remove(found)
+            return ok({"revoked": True})
+        if rest == "/requests" and method == "GET":
+            return ok({"requests": self.join_requests.get(chat.id, [])})
+        m = re.fullmatch(r"/requests/([^/]+)", rest)
+        if m and method == "POST":
+            waiting = self.join_requests.get(chat.id, [])
+            found = next((r for r in waiting if r["user"]["id"] == m.group(1)), None)
+            if found is None:
+                return err(404, "request_not_found", "no request from this user")
+            waiting.remove(found)
+            return ok({"approved": body["approve"]})
+        if rest == "/stats" and method == "GET":
+            return ok(self.stats)
+        return None
 
     def _edit(self, message_id: int, body: dict[str, Any]) -> httpx2.Response:
         chat = self.chats.get(str(body.get("chatId")))
@@ -581,3 +937,54 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         if rest == "/typing":
             return ok({"sent": True})
         return err(404, "not_found", "no such method")
+
+
+MARK_MEDIA = "\x01pgpchat-media-v1\x01"
+MARK_ALBUM = "\x01pgpchat-album-v1\x01"
+MARK_STICKER = "\x01pgpchat-sticker-v1\x01"
+
+
+def multipart(content: bytes, content_type: str) -> dict[str, bytes]:
+    """The fields of a multipart/form-data body, by name."""
+    boundary = content_type.split("boundary=", 1)[1].strip('"').encode()
+    fields: dict[str, bytes] = {}
+    for part in content.split(b"--" + boundary):
+        head, sep, data = part.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        m = re.search(rb'name="([^"]+)"', head)
+        if m:
+            fields[m.group(1).decode()] = data.removesuffix(b"\r\n")
+    return fields
+
+
+def read_body(raw: str) -> dict[str, Any]:
+    """What the server makes of a readable body: the words, the files, the sticker."""
+    out: dict[str, Any] = {"text": raw, "media": [], "sticker": None, "forward": None, "link": None}
+    for mark in (MARK_MEDIA, MARK_ALBUM):
+        if raw.startswith(mark):
+            env = json.loads(raw[len(mark) :])
+            items = env["items"] if mark == MARK_ALBUM else [env]
+            out["text"] = env.get("cap")
+            out["media"] = [
+                {
+                    "id": i["media"],
+                    "kind": i["kind"],
+                    "mime": i.get("mime"),
+                    "url": f"/media/{i['media']}",
+                    "width": i.get("w"),
+                    "height": i.get("h"),
+                    "duration": i.get("dur"),
+                    "name": i.get("name"),
+                    "size": i.get("size"),
+                    "plain": i.get("plain") is True,
+                    "thumb": i.get("thumb"),
+                    "sha256": i.get("sha256"),
+                }
+                for i in items
+            ]
+    if raw.startswith(MARK_STICKER):
+        env = json.loads(raw[len(MARK_STICKER) :])
+        out["text"] = None
+        out["sticker"] = {**env, "url": f"/media/{env['mediaId']}"}
+    return out
