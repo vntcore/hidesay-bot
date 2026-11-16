@@ -97,6 +97,7 @@ from .models import (
 from .ratelimit import RateLimiter
 from .router import Handler, Router, SkipHandler, is_async
 from .storage import FailedUpdate, MemoryStorage, SQLiteStorage, Storage
+from .webbot import WEB_BOT_DATA_MAX_AGE, WebBotData, validate_web_bot_data
 from .webhook import WebhookApp
 from .wire import parse_body
 
@@ -394,6 +395,8 @@ class _BotBase(Router):
 
         self._me: BotInfo | None = None
         self._me_at = float("-inf")
+        # the server's Web-Bot key: public, the same for every bot, fetched once
+        self._web_bot_key: str | None = None
         self._cache_ttl = cache_ttl
         self._chats = _TTLCache(cache_ttl)
         self._modes = _TTLCache(cache_ttl)
@@ -2333,6 +2336,40 @@ class Bot(_BotBase):
         """
         return await self._aapi.revoke_token()
 
+    async def validate_web_bot_data(
+        self, init_data: str, *, max_age: float | None = WEB_BOT_DATA_MAX_AGE
+    ) -> WebBotData:
+        """Checks the ``initData`` a page of this bot's Web-Bot sent, and reads it.
+
+        The bot's ID and the server's Web-Bot key are fetched the first time and kept, so
+        after that the check runs without any network. See
+        `~hidesay_bot.validate_web_bot_data` for what is checked.
+
+        Args:
+            init_data: The string as the page sent it (``window.Hidesay.WebBot.initData``).
+            max_age: The oldest data accepted, in seconds since it was signed, or ``None`` to
+                accept any age.
+
+        Returns:
+            What the data says, now that it is known to come from the server.
+
+        Raises:
+            WebBotDataError: The data is refused; ``reason`` says why.
+
+        Example:
+            In a route of any web framework::
+
+                try:
+                    data = await bot.validate_web_bot_data(request.headers["x-init-data"])
+                except WebBotDataError:
+                    return Response(status_code=401)
+                cart = carts[data.user.id]
+        """
+        me = await self.get_me()
+        if self._web_bot_key is None:
+            self._web_bot_key = await self._aapi.get_web_bot_key()
+        return validate_web_bot_data(init_data, bot_id=me.id, public_key=self._web_bot_key, max_age=max_age)
+
     async def download_media(self, media: Media | str, *, max_bytes: int = MEDIA_MAX_BYTES) -> bytes:
         """Downloads the file behind a `Media`, decrypted when it came from an encrypted chat.
 
@@ -3531,6 +3568,38 @@ class SyncBot(_BotBase):
             `AuthenticationError`, and a polling bot stops.
         """
         return self._api.revoke_token()
+
+    def validate_web_bot_data(self, init_data: str, *, max_age: float | None = WEB_BOT_DATA_MAX_AGE) -> WebBotData:
+        """Checks the ``initData`` a page of this bot's Web-Bot sent, and reads it.
+
+        The bot's ID and the server's Web-Bot key are fetched the first time and kept, so
+        after that the check runs without any network. See
+        `~hidesay_bot.validate_web_bot_data` for what is checked.
+
+        Args:
+            init_data: The string as the page sent it (``window.Hidesay.WebBot.initData``).
+            max_age: The oldest data accepted, in seconds since it was signed, or ``None`` to
+                accept any age.
+
+        Returns:
+            What the data says, now that it is known to come from the server.
+
+        Raises:
+            WebBotDataError: The data is refused; ``reason`` says why.
+
+        Example:
+            In a route of any web framework::
+
+                try:
+                    data = bot.validate_web_bot_data(request.headers["x-init-data"])
+                except WebBotDataError:
+                    return Response(status_code=401)
+                cart = carts[data.user.id]
+        """
+        me = self.get_me()
+        if self._web_bot_key is None:
+            self._web_bot_key = self._api.get_web_bot_key()
+        return validate_web_bot_data(init_data, bot_id=me.id, public_key=self._web_bot_key, max_age=max_age)
 
     def download_media(self, media: Media | str, *, max_bytes: int = MEDIA_MAX_BYTES) -> bytes:
         """Downloads the file behind a `Media`, decrypted when it came from an encrypted chat.

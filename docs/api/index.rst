@@ -31,6 +31,8 @@ Page                               Contents
 :doc:`crypto`                      :class:`BotKey`, :class:`PublicKey`, :class:`Verification`
 :doc:`storage`                     :class:`MemoryStorage`, :class:`SQLiteStorage`, writing your own
 :doc:`webhook`                     :class:`WebhookApp`, :func:`generate_secret`
+:doc:`webbot`                      :func:`validate_web_bot_data`, :class:`WebBotData`,
+                                   :class:`WebBotUser`
 :doc:`errors`                      every exception, with the server's error codes
 =================================  ===================================================================
 

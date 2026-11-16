@@ -82,6 +82,7 @@ same text is also available offline: ``help(hidesay_bot.Bot)`` in Python, or
    guides/commands-and-buttons
    guides/long-polling
    guides/webhook
+   guides/web-bot
    guides/openpgp
    guides/errors
    guides/rate-limiting
@@ -104,6 +105,7 @@ same text is also available offline: ``help(hidesay_bot.Bot)`` in Python, or
    api/crypto
    api/storage
    api/webhook
+   api/webbot
    api/errors
 
 .. toctree::

@@ -350,6 +350,17 @@ def get_user_key(user_id: str | int) -> Call[UserKey]:
 # --- Token ---
 
 
+def _web_bot_key(result: Any) -> str:
+    key = result.get("key") if isinstance(result, Mapping) else None
+    if not isinstance(key, str) or not key:
+        raise PayloadError("webbot/key: expected an object with a 'key' string")
+    return key
+
+
+def get_web_bot_key() -> Call[str]:
+    return Call("GET", "/webbot/key", _web_bot_key)
+
+
 def revoke_token() -> Call[bool]:
     return Call(
         "POST",
@@ -383,5 +394,6 @@ OPERATIONS: Sequence[str] = (
     "send_typing",
     "resolve",
     "get_user_key",
+    "get_web_bot_key",
     "revoke_token",
 )

@@ -9,6 +9,19 @@ numbers follow [Semantic Versioning](https://semver.org/), with the rules in
 For Bot API 2.0.0, where IDs stopped being plain numbers. 0.2.0 can't read what that server
 sends: upgrade both together.
 
+### Added
+
+- `validate_web_bot_data` checks the `initData` a bot's Web-Bot page sends to its server: the
+  Hidesay server's Ed25519 signature, the bot it was signed for and its age. What comes back is
+  a `WebBotData`, whose user has the same ID the bot sees in its updates. `parse_web_bot_data`
+  reads the string without checking it, and `WebBotDataError.reason` says why one was refused.
+  No new dependency: `cryptography` does the check when it is installed, plain Python when it
+  isn't. See the new Web-Bots guide.
+- `get_web_bot_key()` on both clients (`GET /webbot/key`), and `validate_web_bot_data()` on
+  `Bot` and `SyncBot`, which fetches the bot's ID and the key once and keeps them.
+- Two new update kinds come through as they are, in `raw`: `web_bot_write_access` and
+  `web_bot_contact`.
+
 ### Changed
 
 - IDs are strings. A person's is eight digits (`"48213907"`); a bot's, a group's and a

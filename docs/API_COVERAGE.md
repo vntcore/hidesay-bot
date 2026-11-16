@@ -34,6 +34,7 @@ from the document.
 | `/resolve/{username}` | GET | `resolve` | `resolve` | `Resolved`, `HandleKind`, `ChatCard`, `ChatPeer` | {py:meth}`client <hidesay_bot.AsyncClient.resolve>`, {py:meth}`bot <hidesay_bot.Bot.resolve>` |
 | `/users/{userId}/key` | GET | `getUserKey` | `get_user_key` | `UserKey` | {py:meth}`client <hidesay_bot.AsyncClient.get_user_key>` |
 | `/token/revoke` | POST | `revokeToken` | `revoke_token` | `bool` | {py:meth}`client <hidesay_bot.AsyncClient.revoke_token>` |
+| `/webbot/key` | GET | `getWebBotKey` | `get_web_bot_key`; `Bot.validate_web_bot_data` | `str` | {py:meth}`client <hidesay_bot.AsyncClient.get_web_bot_key>`, [Web-Bots](guides/web-bot.md#the-key) |
 | webhook `update` (server → bot) | POST | — | `create_webhook_app`, `WebhookApp.handle` | `Update` | [webhooks](guides/webhook.md), [reference](api/webhook.rst) |
 | `/media/{id}` (not in the spec) | GET | — | `download_media` | `Media` | {py:meth}`client <hidesay_bot.AsyncClient.download_media>` |
 

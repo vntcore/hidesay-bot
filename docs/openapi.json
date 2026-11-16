@@ -39,7 +39,8 @@
     { "name": "Names", "description": "Turning a public handle into an id." },
     { "name": "Commands", "description": "The list the app shows when somebody types a slash." },
     { "name": "Key", "description": "Publishing the bot's OpenPGP key, which makes it protected." },
-    { "name": "Token", "description": "Burning the token this bot is using." }
+    { "name": "Token", "description": "Burning the token this bot is using." },
+    { "name": "Web-Bots", "description": "Checking who opened the bot's Web-Bot, from the initData its page sends." }
   ],
   "paths": {
     "/me": {
@@ -653,6 +654,22 @@
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
+    },
+    "/webbot/key": {
+      "get": {
+        "tags": ["Web-Bots"],
+        "operationId": "getWebBotKey",
+        "summary": "The key initData is signed with",
+        "description": "A Web-Bot page gets `initData` from the app: who opened it (`user`, as JSON in the shape of `UserRef` plus `languageCode`, `photoUrl`, `bannerUrl` and `allowsWriteToPm`), `chatType` (`private` or `link`), `startParam` when the link had one, `authDate` in Unix seconds and `botId`, form-encoded, with an Ed25519 `signature` (base64url, no padding). What is signed is `<botId>:WebBotData`, then every other field as `key=value`, sorted by key, one per line. Check it on your server with this key before believing who the user is; data signed for another bot never passes. The key is the same for every bot and public, so this needs no token: fetch it once and keep it.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The public key.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["ok", "result"], "properties": { "ok": { "const": true }, "result": { "$ref": "#/components/schemas/WebBotKey" } } }, "example": { "ok": true, "result": { "key": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo", "algorithm": "Ed25519" } } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
     }
   },
   "webhooks": {
@@ -989,7 +1006,7 @@
         "description": "One thing that happened. `kind` says which of the other fields is set.",
         "properties": {
           "updateId": { "type": "integer", "description": "Grows by one per update, per bot." },
-          "kind": { "type": "string", "enum": ["message", "edited_message", "deleted_messages", "callback_query", "my_chat_member"] },
+          "kind": { "type": "string", "enum": ["message", "edited_message", "deleted_messages", "callback_query", "my_chat_member", "web_bot_write_access", "web_bot_contact"] },
           "message": { "$ref": "#/components/schemas/Message" },
           "chat": { "$ref": "#/components/schemas/ChatRef" },
           "messageIds": { "type": "array", "items": { "type": "integer" }, "description": "`deleted_messages`: what went." },
@@ -997,15 +1014,37 @@
           "from": { "$ref": "#/components/schemas/UserRef" },
           "date": { "type": "integer" },
           "old": { "$ref": "#/components/schemas/Seat" },
-          "new": { "$ref": "#/components/schemas/Seat" }
+          "new": { "$ref": "#/components/schemas/Seat" },
+          "contact": { "$ref": "#/components/schemas/Contact" }
         },
         "oneOf": [
           { "title": "message", "description": "A person wrote to the bot, or something addressed to it in a group.", "required": ["message"] },
           { "title": "edited_message", "description": "They edited a message the bot had received.", "required": ["message"] },
           { "title": "deleted_messages", "description": "Messages were deleted for everyone. In a group: the ones the bot had received. In a private chat: any message of the chat, the bot's own included, so also the ones the bot deleted itself and a whole history the person cleared.", "required": ["chat", "messageIds"] },
           { "title": "callback_query", "description": "Somebody pressed a button under one of the bot's messages. Answer it.", "required": ["callback"] },
-          { "title": "my_chat_member", "description": "The bot's own seat in a chat changed: added, promoted, restricted, removed, left; in a private chat, blocked (`kicked`) or unblocked (`member`).", "required": ["chat", "old", "new"] }
+          { "title": "my_chat_member", "description": "The bot's own seat in a chat changed: added, promoted, restricted, removed, left; in a private chat, blocked (`kicked`) or unblocked (`member`).", "required": ["chat", "old", "new"] },
+          { "title": "web_bot_write_access", "description": "Somebody said yes to the Web-Bot's `requestWriteAccess`: the private chat with them now exists (`chat`), and the bot may write first. Sent once per person.", "required": ["chat", "from", "date"] },
+          { "title": "web_bot_contact", "description": "Somebody shared their phone number from the Web-Bot (`requestContact`), after saying yes in the app. The number is the one verified on their account, never one typed by the page. `chat` is the private chat with them, or null when there is none yet.", "required": ["from", "date", "contact"] }
         ]
+      },
+      "Contact": {
+        "type": "object",
+        "required": ["phone", "userId"],
+        "description": "A phone number somebody chose to share with the bot.",
+        "properties": {
+          "phone": { "type": "string", "description": "E.164, as verified on their account.", "examples": ["+393331234567"] },
+          "firstName": { "type": ["string", "null"] },
+          "lastName": { "type": ["string", "null"] },
+          "userId": { "$ref": "#/components/schemas/UserId" }
+        }
+      },
+      "WebBotKey": {
+        "type": "object",
+        "required": ["key", "algorithm"],
+        "properties": {
+          "key": { "type": "string", "description": "The 32 raw bytes of the public key, base64url without padding." },
+          "algorithm": { "const": "Ed25519" }
+        }
       },
       "CallbackQuery": {
         "type": "object",

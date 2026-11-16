@@ -144,6 +144,7 @@ SAMPLES: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     "resolve": (("@anna",), {}),
     "get_user_key": (("10000055",), {}),
     "revoke_token": ((), {}),
+    "get_web_bot_key": ((), {}),
 }
 
 

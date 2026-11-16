@@ -73,6 +73,7 @@ __all__ = [
     "UserNotFoundError",
     "UsernameNotFoundError",
     "ValidationError",
+    "WebBotDataError",
     "WebhookActiveError",
     "WebhookError",
     "WrongBodyKindError",
@@ -717,6 +718,39 @@ class WebhookError(HidesayBotError):
         super().__init__(message)
         # what the endpoint answers the server with
         self.status = status
+
+
+class WebBotDataError(HidesayBotError, ValueError):
+    """The ``initData`` a Web-Bot page sent was refused by `validate_web_bot_data`.
+
+    The page cannot be trusted with who the user is: answer it with ``401`` or ``403`` and act
+    on nothing it says. Sending the same string again fails the same way; the user closing
+    and opening the Web-Bot gets fresh data. It is also a `ValueError`.
+
+    Attributes:
+        reason (str): Why: ``"malformed"`` (it does not read as ``initData``), ``"signature"``
+            (not signed by the Hidesay server, or changed since), ``"wrong_bot"`` (signed for
+            another bot) or ``"expired"`` (older than ``max_age``).
+
+    Example:
+        ::
+
+            try:
+                data = validate_web_bot_data(init_data, bot_id=me.id, public_key=key)
+            except WebBotDataError as exc:
+                log.info("refused initData: %s", exc.reason)
+                return Response(status_code=401)
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        """Creates the error.
+
+        Args:
+            message: What is wrong, for a person.
+            reason: The short name of the reason, see `reason`.
+        """
+        super().__init__(message)
+        self.reason = reason
 
 
 # --- OpenPGP ---

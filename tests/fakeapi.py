@@ -132,6 +132,7 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         self.requests: list[dict[str, Any]] = []
         self.faults: list[Fault] = []
         self.revoked = False
+        self.web_bot_key = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
         self.poll_wait = 0.05
         self._arrived = threading.Event()
 
@@ -449,6 +450,8 @@ class FakeAPI(httpx2.BaseTransport, httpx2.AsyncBaseTransport):
         if (method, path) == ("POST", "/token/revoke"):
             self.revoked = True
             return ok({"revoked": True})
+        if (method, path) == ("GET", "/webbot/key"):
+            return ok({"key": self.web_bot_key, "algorithm": "Ed25519"})
         return err(404, "not_found", "no such method")
 
     def _mode_of(self, chat: FakeChat) -> str:

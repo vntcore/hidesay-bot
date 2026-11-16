@@ -1295,6 +1295,26 @@ class AsyncClient(_Base):
         """
         return await self.execute(_spec.revoke_token())
 
+    async def get_web_bot_key(self) -> str:
+        """Fetches the key that checks the ``initData`` of a Web-Bot page.
+
+        Calls ``GET /webbot/key``. The key is public and the same for every bot, so it can be
+        fetched once and kept in the bot's configuration. Retried after a network error or a
+        ``5xx`` answer.
+
+        Returns:
+            The server's Ed25519 public key: its 32 bytes in base64url, the form
+            `~hidesay_bot.validate_web_bot_data` takes.
+
+        Example:
+            Fetch it once, then check every request offline::
+
+                key = await api.get_web_bot_key()
+                me = await api.get_me()
+                data = validate_web_bot_data(init_data, bot_id=me.id, public_key=key)
+        """
+        return await self.execute(_spec.get_web_bot_key())
+
     # --- not an operation of the spec, but where the media URLs point ---
 
     async def download_media(self, media: Media | str, *, max_bytes: int = MEDIA_MAX_BYTES) -> bytes:
@@ -2387,6 +2407,26 @@ class Client(_Base):
             `AuthenticationError`.
         """
         return self.execute(_spec.revoke_token())
+
+    def get_web_bot_key(self) -> str:
+        """Fetches the key that checks the ``initData`` of a Web-Bot page.
+
+        Calls ``GET /webbot/key``. The key is public and the same for every bot, so it can be
+        fetched once and kept in the bot's configuration. Retried after a network error or a
+        ``5xx`` answer.
+
+        Returns:
+            The server's Ed25519 public key: its 32 bytes in base64url, the form
+            `~hidesay_bot.validate_web_bot_data` takes.
+
+        Example:
+            Fetch it once, then check every request offline::
+
+                key = api.get_web_bot_key()
+                me = api.get_me()
+                data = validate_web_bot_data(init_data, bot_id=me.id, public_key=key)
+        """
+        return self.execute(_spec.get_web_bot_key())
 
     # --- media ---
 

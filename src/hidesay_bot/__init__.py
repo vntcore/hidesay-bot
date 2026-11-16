@@ -51,6 +51,8 @@ Keys, storage, webhooks and errors
 - `~hidesay_bot.SQLiteStorage`: a queue of updates on disk that survives restarts.
 - `~hidesay_bot.WebhookApp`: the ASGI app the server posts updates to.
 - `~hidesay_bot.Secret`: a string that stays out of logs and ``repr``.
+- `~hidesay_bot.validate_web_bot_data`: checks who opened the bot's Web-Bot, from the
+  ``initData`` its page sends.
 - `~hidesay_bot.HidesayBotError`: the base of every error; `~hidesay_bot.APIError` is the server's
   refusal, with one subclass per error code.
 
@@ -127,6 +129,7 @@ from .errors import (
     UsernameNotFoundError,
     UserNotFoundError,
     ValidationError,
+    WebBotDataError,
     WebhookActiveError,
     WebhookError,
     WrongBodyKindError,
@@ -179,6 +182,7 @@ from .models import (
 from .ratelimit import RateLimiter
 from .router import Router, SkipHandler
 from .storage import FailedUpdate, MemoryStorage, SQLiteStorage, Storage
+from .webbot import WebBotData, WebBotUser, parse_web_bot_data, validate_web_bot_data
 from .webhook import WebhookApp, generate_secret
 
 __all__ = [
@@ -288,6 +292,9 @@ __all__ = [
     "UsernameNotFoundError",
     "ValidationError",
     "Verification",
+    "WebBotData",
+    "WebBotDataError",
+    "WebBotUser",
     "WebhookActiveError",
     "WebhookApp",
     "WebhookError",
@@ -298,6 +305,8 @@ __all__ = [
     "filters",
     "format_fingerprint",
     "generate_secret",
+    "parse_web_bot_data",
+    "validate_web_bot_data",
 ]
 
 # a library never prints on its own: the application decides where logs go

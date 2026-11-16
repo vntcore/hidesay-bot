@@ -175,3 +175,8 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 module = ["pysequoia", "pysequoia.*", "openpgp", "openpgp.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
+
+# optional: Ed25519 checks use it when it's installed
+[[tool.mypy.overrides]]
+module = ["cryptography", "cryptography.*"]
+ignore_missing_imports = true

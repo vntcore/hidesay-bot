@@ -252,3 +252,10 @@ Webhooks, polling and storage
 
 .. autoexception:: PollingConflictError
    :show-inheritance:
+
+Web-Bots
+--------
+
+.. autoexception:: WebBotDataError
+   :members:
+   :show-inheritance:
